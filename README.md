@@ -152,7 +152,7 @@ metadata:
   namespace: mcexport
 spec:
   prober:
-    url: 'mcexport.mcexport:10026'
+    url: 'mcexport.mcexport.cluster.local:10026'
   interval: 60s
   scrapeTimeout: 30s
   targets:
@@ -161,6 +161,10 @@ spec:
       - 'mc.justchunks.net'
       - 'example.com'
 ```
+
+Depending on your setup, you may also need to add a label, so that the configuration is picked up by your Prometheus
+instance. If you've installed it through the `kube-prometheus-stack` helm chart, it could, for example, be
+`release: kube-prometheus-stack`. You can check the required labels in your Prometheus CRD.
 
 ## Reporting Security Issues
 
