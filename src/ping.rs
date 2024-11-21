@@ -13,7 +13,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::net::TcpStream;
-use tracing::info;
 
 /// The (at the time of the last release) most recent, supported protocol version.
 ///
@@ -139,7 +138,6 @@ pub async fn get_server_status(
         info.target.port,
     );
     let status_string = retrieve_status(&mut stream, &handshake_info).await?;
-    info!("{}", status_string.clone());
     let status: ServerStatus =
         from_str(&status_string).map_err(|err| PingError::InvalidJson(err, status_string))?;
 
