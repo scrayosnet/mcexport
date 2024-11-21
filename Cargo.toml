@@ -1,0 +1,29 @@
+[package]
+name = "mcexport"
+description = "Minecraft Server Prometheus Probe Exporter"
+version = "0.1.0"
+authors = [
+    "Joshua Dean Küpper <admin@joshua-kuepper.de>"
+]
+license = "MIT"
+repository = "https://github.com/scrayosnet/mcexport"
+readme = "README.md"
+documentation = "https://github.com/scrayosnet/mcexport"
+homepage = "https://github.com/scrayosnet/mcexport"
+keywords = ["minecraft", "prometheus", "monitoring", "exporter", "ping"]
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "tower-log", "tracing", "query"] }
+tracing = "0.1"
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1"
+hickory-resolver = "0.24.1"
+thiserror = "2.0.3"
+prometheus-client = "0.22.3"
+tracing-subscriber = "0.3.18"
+tower-http = { version = "0.6.1", features = ["trace"] }
+
+[dev-dependencies]
+serde_test = "1"
