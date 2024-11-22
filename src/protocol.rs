@@ -76,10 +76,13 @@ trait InboundPacket: Packet + Sized {
 /// The data in this packet can differ from the actual data that was used but will be considered by the server when
 /// assembling the response. Therefore, this data should mirror what a normal client would send.
 struct HandshakePacket {
-    ///
+    /// The pretended protocol version.
     protocol_version: isize,
+    /// The pretended server address.
     server_address: String,
+    /// The pretended server port.
     server_port: u16,
+    /// The protocol state to initiate.
     next_state: State,
 }
 
