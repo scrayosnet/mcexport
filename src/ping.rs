@@ -5,13 +5,13 @@
 //! stream to the target without any specifics of the Minecraft protocol. The ping packet takes the result of the
 //! protocol communication and wraps it into easily usable data structs.
 
-use crate::probe::ProbeInfo;
-use crate::protocol::{execute_ping, retrieve_status, HandshakeInfo, ProtocolError};
+use crate::probe::ProbingInfo;
+use crate::protocol;
+use crate::protocol::{execute_ping, retrieve_status, HandshakeInfo};
 use serde::Deserialize;
 use serde_json::from_str;
 use std::net::SocketAddr;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::net::TcpStream;
 
 /// The (at the time of the last release) most recent, supported protocol version.
@@ -22,13 +22,13 @@ use tokio::net::TcpStream;
 /// results in all cases.
 const LATEST_PROTOCOL_VERSION: isize = 768;
 
-/// PingError is the internal error type for all errors related to the network communication.
+/// The internal error type for all errors related to the network communication.
 ///
 /// This includes errors with the IO involved in establishing a TCP connection or transferring bytes from mcexport to
 /// a target server. Additionally, this also covers the errors that occur while parsing and interpreting the results
 /// returned by the corresponding server, that don't have to do with the protocol itself.
-#[derive(Error, Debug)]
-pub enum PingError {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
     /// No connection could be initiated to the target server (it is not reachable).
     #[error("failed to connect to the server")]
     CannotReach,
@@ -37,7 +37,7 @@ pub enum PingError {
     InvalidJson(#[source] serde_json::error::Error, String),
     /// An error occurred while trying to perform the server handshake or ping.
     #[error("mismatch in communication protocol: {0}")]
-    ProtocolMismatch(#[from] ProtocolError),
+    ProtocolMismatch(#[from] protocol::Error),
     /// An error occurred while parsing the protocol version (module).
     #[error("illegal protocol version: {0}")]
     IllegalProtocol(String),
@@ -53,7 +53,7 @@ pub struct ServerVersion {
 }
 
 /// The information on a single, sampled player entry.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ServerPlayer {
     /// The visual name to display this player.
     pub name: String,
@@ -97,7 +97,7 @@ pub struct ServerStatus {
 
 /// The full status of the ping operation along with the resolution information and ping duration.
 #[derive(Debug, Deserialize)]
-pub struct PingStatus {
+pub struct ProbeStatus {
     /// Whether an SRV record was used to resolve the real address of the server.
     pub srv: bool,
     /// The latency to get information from one side to the other (RTT/2).
@@ -114,20 +114,20 @@ pub struct PingStatus {
 /// closed after the ping interaction. If the async interaction is stopped, the connection will also be terminated
 /// prematurely, accounting for Prometheus' timeouts.
 pub async fn get_server_status(
-    info: &ProbeInfo,
+    info: &ProbingInfo,
     addr: &SocketAddr,
     srv: bool,
-) -> Result<PingStatus, PingError> {
+) -> Result<ProbeStatus, Error> {
     // create a new tcp stream to the target
     let mut stream = TcpStream::connect(addr)
         .await
-        .map_err(|_| PingError::CannotReach)?;
+        .map_err(|_| Error::CannotReach)?;
 
     // try to use specific, requested version and fall back to "recent"
     let protocol_version = match &info.module {
         Some(ver) => ver
             .parse()
-            .map_err(|_| PingError::IllegalProtocol(ver.clone()))?,
+            .map_err(|_| Error::IllegalProtocol(ver.clone()))?,
         None => LATEST_PROTOCOL_VERSION,
     };
 
@@ -139,13 +139,13 @@ pub async fn get_server_status(
     );
     let status_string = retrieve_status(&mut stream, &handshake_info).await?;
     let status: ServerStatus =
-        from_str(&status_string).map_err(|err| PingError::InvalidJson(err, status_string))?;
+        from_str(&status_string).map_err(|err| Error::InvalidJson(err, status_string))?;
 
     // perform the server ping to measure duration
     let ping = execute_ping(&mut stream).await?;
 
     // wrap everything into a ping response
-    Ok(PingStatus { srv, ping, status })
+    Ok(ProbeStatus { srv, ping, status })
 }
 
 #[cfg(test)]

@@ -2,10 +2,9 @@ mod ping;
 mod probe;
 mod protocol;
 
-use crate::ping::{get_server_status, PingError, PingStatus};
+use crate::ping::{get_server_status, ProbeStatus};
+use crate::probe::ProbingInfo;
 use crate::probe::ResolutionResult::{Plain, Srv};
-use crate::probe::{ProbeError, ProbeInfo};
-use crate::protocol::ProtocolError;
 use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::header::CONTENT_TYPE;
@@ -18,35 +17,33 @@ use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::Arc;
-use thiserror::Error;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
+use tracing_subscriber::{fmt, Layer};
 
-/// MetricError is the public response error wrapper for all errors that can be relayed to the caller.
+/// The public response error wrapper for all errors that can be relayed to the caller.
 ///
 /// This wraps all errors of the child modules into their own error type, so that they can be forwarded to the caller
 /// of the probe requests. Those errors occur while trying to assemble the response for a specific probe and are then
 /// wrapped into a parent type so that they can be more easily traced.
-#[derive(Error, Debug)]
-pub enum MetricError {
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
     /// An error occurred while reading or writing to the underlying byte stream.
     #[error("failed to resolve the intended target address: {0}")]
-    ProbeError(#[from] ProbeError),
+    ProbeError(#[from] probe::Error),
     /// An error occurred while encoding, decoding or interpreting the Minecraft protocol.
     #[error("failed to interpret or encode protocol messages: {0}")]
-    ProtocolError(#[from] ProtocolError),
+    ProtocolError(#[from] protocol::Error),
     /// An error occurred while reading or writing to the underlying byte stream.
     #[error("failed to communicate with the target server: {0}")]
-    PingError(#[from] PingError),
+    PingError(#[from] ping::Error),
 }
 
 /// AppState contains various, shared resources for the state of the application.
@@ -59,17 +56,17 @@ pub struct AppState {
     pub resolver: TokioAsyncResolver,
 }
 
-impl IntoResponse for MetricError {
+impl IntoResponse for Error {
     fn into_response(self) -> Response {
         // notify in the log (as we don't see it otherwise)
-        info!(cause = &self.to_string(), "failed to resolve the target");
+        info!(cause = self.to_string(), "failed to resolve the target");
 
         // respond with the unsuccessful metrics
         generate_metrics_response(0, |_| {})
     }
 }
 
-impl IntoResponse for PingStatus {
+impl IntoResponse for ProbeStatus {
     fn into_response(self) -> Response {
         // return the generated metrics
         generate_metrics_response(1, |registry| {
@@ -91,9 +88,7 @@ impl IntoResponse for PingStatus {
                 "Whether there was an SRV record for the hostname",
                 address_srv.clone(),
             );
-            address_srv
-                .get_or_create(&())
-                .set(if self.srv { 1 } else { 0 });
+            address_srv.get_or_create(&()).set(i64::from(self.srv));
 
             let players_online = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
@@ -142,10 +137,7 @@ impl IntoResponse for PingStatus {
                 "The size of the favicon in bytes",
                 favicon_bytes.clone(),
             );
-            let size = match self.status.favicon {
-                Some(icon) => icon.len(),
-                None => 0,
-            };
+            let size: usize = self.status.favicon.map_or(0, |icon| icon.len());
             favicon_bytes.get_or_create(&()).set(size as i64);
         })
     }
@@ -157,22 +149,17 @@ impl IntoResponse for PingStatus {
 /// configures the corresponding routes for the status and probe endpoint and makes them publicly available. The
 /// prometheus registry and metrics are initialized and made ready for the first probe requests.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .compact()
-                .with_filter(LevelFilter::INFO),
-        )
+        .with(fmt::layer().compact().with_filter(LevelFilter::INFO))
         .init();
 
     // initialize the application state
-    let state = AppState {
+    let state = Arc::new(AppState {
         resolver: TokioAsyncResolver::tokio_from_system_conf().expect("failed to get DNS resolver"),
-    };
+    });
 
     // initialize the axum app with all routes
-    let state = Arc::new(state);
     let app = Router::new()
         .route("/", get(handle_root))
         .route("/probe", get(handle_probe))
@@ -204,7 +191,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// can accurately reflect the readiness and liveness of mcexport.
 #[instrument]
 async fn handle_root() -> Response {
-    Html("mcexport – <a href=\"/probe\">Probe</a>").into_response()
+    Html("mcexport - <a href=\"/probe\">Probe</a>").into_response()
 }
 
 /// Handles and answers all axum requests on the probing path "/probe".
@@ -215,9 +202,9 @@ async fn handle_root() -> Response {
 /// the requests to this endpoint regularly.
 #[instrument]
 async fn handle_probe(
-    Query(info): Query<ProbeInfo>,
+    Query(info): Query<ProbingInfo>,
     State(state): State<Arc<AppState>>,
-) -> Result<PingStatus, MetricError> {
+) -> Result<ProbeStatus, Error> {
     // try to resolve the real probe address
     let resolve_result = info.target.to_socket_addrs(&state.resolver).await?;
 
