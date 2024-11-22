@@ -41,32 +41,33 @@ pub enum Error {
 
 /// State is the desired state that the connection should be in after the initial handshake.
 #[derive(Clone, Copy)]
-pub enum State {
+enum State {
     Status,
-    Login,
 }
 
 impl From<State> for usize {
     fn from(state: State) -> Self {
         match state {
             State::Status => 1,
-            State::Login => 2,
         }
     }
 }
 
-/// OutboundPacket are packets that are written and therefore have a fixed, specific packet ID.
-pub trait OutboundPacket {
-    /// Returns the specified
-    fn get_packet_id(&self) -> usize;
+/// Packets are network packets that are part of the protocol definition and identified by a context and ID.
+trait Packet {
+    /// Returns the defined ID of this network packet.
+    fn get_packet_id() -> usize;
+}
 
+/// OutboundPackets are packets that are written and therefore have a fixed, specific packet ID.
+trait OutboundPacket: Packet {
+    /// Creates a new buffer with the data from this packet.
     async fn to_buffer(&self) -> Result<Vec<u8>, Error>;
 }
 
-/// InboundPacket are packets that are read and therefore are expected to be of a specific packet ID.
-pub trait InboundPacket: Sized {
-    fn get_packet_id() -> usize;
-
+/// InboundPackets are packets that are read and therefore are expected to be of a specific packet ID.
+trait InboundPacket: Packet + Sized {
+    /// Creates a new instance of this packet with the data from the buffer.
     async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error>;
 }
 
@@ -74,19 +75,18 @@ pub trait InboundPacket: Sized {
 ///
 /// The data in this packet can differ from the actual data that was used but will be considered by the server when
 /// assembling the response. Therefore, this data should mirror what a normal client would send.
-pub struct HandshakePacket {
-    pub packet_id: usize,
-    pub protocol_version: isize,
-    pub server_address: String,
-    pub server_port: u16,
-    pub next_state: State,
+struct HandshakePacket {
+    ///
+    protocol_version: isize,
+    server_address: String,
+    server_port: u16,
+    next_state: State,
 }
 
 impl HandshakePacket {
     /// Creates a new [HandshakePacket] with the supplied client information.
-    pub const fn new(protocol_version: isize, server_address: String, server_port: u16) -> Self {
+    const fn new(protocol_version: isize, server_address: String, server_port: u16) -> Self {
         Self {
-            packet_id: 0,
             protocol_version,
             server_address,
             server_port,
@@ -95,14 +95,17 @@ impl HandshakePacket {
     }
 }
 
-impl OutboundPacket for HandshakePacket {
-    fn get_packet_id(&self) -> usize {
-        self.packet_id
+impl Packet for HandshakePacket {
+    fn get_packet_id() -> usize {
+        0x00
     }
+}
 
+impl OutboundPacket for HandshakePacket {
     async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
         let mut buffer = Cursor::new(Vec::<u8>::new());
 
+        #[allow(clippy::cast_sign_loss)]
         buffer.write_varint(self.protocol_version as usize).await?;
         buffer.write_string(&self.server_address).await?;
         buffer.write_u16(self.server_port).await?;
@@ -116,22 +119,22 @@ impl OutboundPacket for HandshakePacket {
 ///
 /// The packet can only be sent after the [HandshakePacket] and must be written before any status information can be
 /// read, as this is the differentiator between the status and the ping sequence.
-pub struct RequestPacket {
-    pub packet_id: usize,
-}
+struct StatusRequestPacket;
 
-impl RequestPacket {
-    /// Creates a new [RequestPacket].
-    pub const fn new() -> Self {
-        Self { packet_id: 0 }
+impl StatusRequestPacket {
+    /// Creates a new [StatusRequestPacket].
+    const fn new() -> Self {
+        Self
     }
 }
 
-impl OutboundPacket for RequestPacket {
-    fn get_packet_id(&self) -> usize {
-        0
+impl Packet for StatusRequestPacket {
+    fn get_packet_id() -> usize {
+        0x00
     }
+}
 
+impl OutboundPacket for StatusRequestPacket {
     async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
         Ok(Vec::new())
     }
@@ -141,22 +144,24 @@ impl OutboundPacket for RequestPacket {
 ///
 /// This packet can be received only after a [StatusRequestPacket] and will not close the connection, allowing for a
 /// ping sequence to be exchanged afterward.
-pub struct ResponsePacket {
-    pub packet_id: usize,
-    pub body: String,
+struct StatusResponsePacket {
+    /// The JSON response body that contains all self-reported server metadata.
+    body: String,
 }
 
-impl InboundPacket for ResponsePacket {
+impl Packet for StatusResponsePacket {
     fn get_packet_id() -> usize {
-        0
+        0x00
     }
+}
 
+impl InboundPacket for StatusResponsePacket {
     async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error> {
         let mut reader = Cursor::new(buffer);
 
         let body = reader.read_string().await?;
 
-        Ok(Self { packet_id: 0, body })
+        Ok(Self { body })
     }
 }
 
@@ -164,26 +169,25 @@ impl InboundPacket for ResponsePacket {
 ///
 /// This packet can be sent after a connection was established or the [StatusResponsePacket] was received. Initiating
 /// the ping sequence will consume the connection after the [PongPacket] was received.
-pub struct PingPacket {
-    pub packet_id: usize,
-    pub payload: u64,
+struct PingPacket {
+    /// The arbitrary payload that will be returned from the server (to identify the corresponding request).
+    payload: u64,
 }
 
 impl PingPacket {
     /// Creates a new [PingPacket] with the supplied payload.
-    pub const fn new(payload: u64) -> Self {
-        Self {
-            packet_id: 1,
-            payload,
-        }
+    const fn new(payload: u64) -> Self {
+        Self { payload }
+    }
+}
+
+impl Packet for PingPacket {
+    fn get_packet_id() -> usize {
+        0x01
     }
 }
 
 impl OutboundPacket for PingPacket {
-    fn get_packet_id(&self) -> usize {
-        self.packet_id
-    }
-
     async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
         let mut buffer = Cursor::new(Vec::<u8>::new());
 
@@ -197,25 +201,24 @@ impl OutboundPacket for PingPacket {
 ///
 /// This packet can be received after a corresponding [PingPacket] and will have the same payload as the request. This
 /// also consumes the connection, ending the Server List Ping sequence.
-pub struct PongPacket {
-    pub packet_id: usize,
-    pub payload: u64,
+struct PongPacket {
+    /// The arbitrary payload that was sent from the client (to identify the corresponding response).
+    payload: u64,
+}
+
+impl Packet for PongPacket {
+    fn get_packet_id() -> usize {
+        0x01
+    }
 }
 
 impl InboundPacket for PongPacket {
-    fn get_packet_id() -> usize {
-        1
-    }
-
     async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error> {
         let mut reader = Cursor::new(buffer);
 
         let payload = reader.read_u64().await?;
 
-        Ok(Self {
-            packet_id: 0,
-            payload,
-        })
+        Ok(Self { payload })
     }
 }
 
@@ -224,7 +227,7 @@ impl InboundPacket for PongPacket {
 /// Only [InboundPackets][InboundPacket] can be read as only those packets are received. There are additional
 /// methods to read the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
 /// [write implementation][AsyncWritePacket].
-pub trait AsyncReadPacket {
+trait AsyncReadPacket {
     /// Reads the supplied [InboundPacket] type from this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
     async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error>;
@@ -296,7 +299,7 @@ impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
 /// Only [OutboundPackets][OutboundPacket] can be written as only those packets are sent. There are additional
 /// methods to write the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
 /// [read implementation][AsyncReadPacket].
-pub trait AsyncWritePacket {
+trait AsyncWritePacket {
     /// Writes the supplied [OutboundPacket] onto this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
     async fn write_packet<T: OutboundPacket + Send + Sync>(
@@ -324,7 +327,7 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
 
         // create a new buffer and write the packet onto it (to get the size)
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        buffer.write_varint(packet.get_packet_id()).await?;
+        buffer.write_varint(T::get_packet_id()).await?;
         buffer.write_all(&raw_packet).await?;
 
         // write the length of the content (length frame encoder) and then the packet
@@ -404,11 +407,11 @@ pub async fn retrieve_status(
     stream.write_packet(handshake).await?;
 
     // create a new status request packet and send it
-    let request = RequestPacket::new();
+    let request = StatusRequestPacket::new();
     stream.write_packet(request).await?;
 
     // await the response for the status request and read it
-    let response: ResponsePacket = stream.read_packet().await?;
+    let response: StatusResponsePacket = stream.read_packet().await?;
 
     Ok(response.body)
 }

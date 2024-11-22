@@ -67,6 +67,7 @@ impl IntoResponse for Error {
 }
 
 impl IntoResponse for ProbeStatus {
+    #[allow(clippy::cast_possible_truncation)]
     fn into_response(self) -> Response {
         // return the generated metrics
         generate_metrics_response(1, |registry| {
@@ -108,7 +109,7 @@ impl IntoResponse for ProbeStatus {
             );
             players_max.get_or_create(&()).set(self.status.players.max);
 
-            let players_samples_count = Family::<(), Gauge>::default();
+            let players_samples_count = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_samples_total",
                 "The number of sample entries that have been sent",
@@ -118,7 +119,7 @@ impl IntoResponse for ProbeStatus {
                 self.status
                     .players
                     .sample
-                    .map_or_else(|| 0usize, |s| s.len()) as i64,
+                    .map_or_else(|| 0usize, |s| s.len()) as u32,
             );
 
             let protocol_version = Family::<(), Gauge>::default();
@@ -131,14 +132,14 @@ impl IntoResponse for ProbeStatus {
                 .get_or_create(&())
                 .set(self.status.version.protocol);
 
-            let favicon_bytes = Family::<(), Gauge>::default();
+            let favicon_bytes = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "favicon_bytes",
                 "The size of the favicon in bytes",
                 favicon_bytes.clone(),
             );
             let size: usize = self.status.favicon.map_or(0, |icon| icon.len());
-            favicon_bytes.get_or_create(&()).set(size as i64);
+            favicon_bytes.get_or_create(&()).set(size as u32);
         })
     }
 }
