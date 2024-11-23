@@ -201,7 +201,7 @@ async fn handle_root() -> Response {
 /// send [info][ProbeInfo] on the corresponding target, and this endpoint will answer with the status and metrics of
 /// this ping operation. The ping is only started once the request comes in and Prometheus is responsible for scheduling
 /// the requests to this endpoint regularly.
-#[instrument]
+#[instrument(skip(state), fields(info = %info))]
 async fn handle_probe(
     Query(info): Query<ProbingInfo>,
     State(state): State<Arc<AppState>>,

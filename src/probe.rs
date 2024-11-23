@@ -57,6 +57,15 @@ pub struct ProbingInfo {
     pub module: Option<String>,
 }
 
+impl Display for ProbingInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self.module {
+            Some(module) => write!(f, "{} ({})", self.target, module),
+            _ => write!(f, "{}", self.target),
+        }
+    }
+}
+
 /// TargetAddress is the combination of a hostname or textual IP address with a port.
 ///
 /// This address should be used to issue a probing ping. The information comes from the request of Prometheus and needs
@@ -68,15 +77,6 @@ pub struct TargetAddress {
     pub hostname: String,
     /// The post that should be used to ping the Minecraft server (ignored if SRV exists).
     pub port: u16,
-}
-
-impl Display for ProbingInfo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match &self.module {
-            Some(module) => write!(f, "{} ({})", self.target, module),
-            _ => write!(f, "{}", self.target),
-        }
-    }
 }
 
 impl TargetAddress {
