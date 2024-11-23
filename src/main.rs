@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -37,13 +37,10 @@ use tracing_subscriber::{fmt, Layer};
 pub enum Error {
     /// An error occurred while reading or writing to the underlying byte stream.
     #[error("failed to resolve the intended target address: {0}")]
-    ProbeError(#[from] probe::Error),
-    /// An error occurred while encoding, decoding or interpreting the Minecraft protocol.
-    #[error("failed to interpret or encode protocol messages: {0}")]
-    ProtocolError(#[from] protocol::Error),
+    ProbeError(#[source] probe::Error, ProbingInfo),
     /// An error occurred while reading or writing to the underlying byte stream.
     #[error("failed to communicate with the target server: {0}")]
-    PingError(#[from] ping::Error),
+    PingError(#[source] ping::Error, ProbingInfo),
 }
 
 /// AppState contains various, shared resources for the state of the application.
@@ -59,7 +56,14 @@ pub struct AppState {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         // notify in the log (as we don't see it otherwise)
-        info!(cause = self.to_string(), "failed to resolve the target");
+        match &self {
+            Self::ProbeError(_, info) | Self::PingError(_, info) => warn!(
+                cause = self.to_string(),
+                target = info.target.to_string(),
+                module = info.module,
+                "failed to resolve the target",
+            ),
+        }
 
         // respond with the unsuccessful metrics
         generate_metrics_response(0, |_| {})
@@ -201,19 +205,24 @@ async fn handle_root() -> Response {
 /// send [info][ProbeInfo] on the corresponding target, and this endpoint will answer with the status and metrics of
 /// this ping operation. The ping is only started once the request comes in and Prometheus is responsible for scheduling
 /// the requests to this endpoint regularly.
-#[instrument(skip(state), fields(info = %info))]
+#[instrument(skip(state, info), fields(target = %info.target, module = %info.module.clone().unwrap_or_else(|| "-".to_string())))]
 async fn handle_probe(
     Query(info): Query<ProbingInfo>,
     State(state): State<Arc<AppState>>,
 ) -> Result<ProbeStatus, Error> {
     // try to resolve the real probe address
-    let resolve_result = info.target.to_socket_addrs(&state.resolver).await?;
+    let resolve_result = info
+        .target
+        .to_socket_addrs(&state.resolver)
+        .await
+        .map_err(|err| Error::ProbeError(err, info.clone()))?;
 
     // issue the status request
     let ping_response = match resolve_result {
-        Srv(addr) => get_server_status(&info, &addr, true).await?,
-        Plain(addr) => get_server_status(&info, &addr, false).await?,
-    };
+        Srv(addr) => get_server_status(&info, &addr, true).await,
+        Plain(addr) => get_server_status(&info, &addr, false).await,
+    }
+    .map_err(|err| Error::PingError(err, info.clone()))?;
 
     Ok(ping_response)
 }

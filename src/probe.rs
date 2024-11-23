@@ -49,7 +49,7 @@ pub enum ResolutionResult {
 /// This information is supplied for each probe request and needs to be used to ping the right target. We cannot handle
 /// requests that come without this query information. While the target address is mandatory, the module is completely
 /// optional and not required for the correct operation of mcexport.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ProbingInfo {
     /// The target that mcexport should ping for the corresponding probe request.
     pub target: TargetAddress,
@@ -71,7 +71,7 @@ impl Display for ProbingInfo {
 /// This address should be used to issue a probing ping. The information comes from the request of Prometheus and needs
 /// to be validated and parsed before it can be used. To get the real target address, the hostname needs to be resolved
 /// and the corresponding SRV records need to be considered.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TargetAddress {
     /// The hostname that should be resolved to the IP address (optionally considering SRV records).
     pub hostname: String,
