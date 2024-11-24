@@ -2,8 +2,6 @@ mod ping;
 mod probe;
 mod protocol;
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use crate::ping::{get_server_status, ProbeStatus};
 use crate::probe::ProbingInfo;
 use crate::probe::ResolutionResult::{Plain, Srv};
@@ -19,6 +17,8 @@ use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::Arc;
@@ -151,9 +151,7 @@ impl IntoResponse for ProbeStatus {
                 "The numeric hash of the visual network protocol",
                 protocol_hash.clone(),
             );
-            protocol_hash
-                .get_or_create(&())
-                .set(hasher.finish() as i64);
+            protocol_hash.get_or_create(&()).set(hasher.finish() as i64);
 
             // favicon bytes (gauge)
             let favicon_bytes = Family::<(), Gauge<u32, AtomicU32>>::default();
