@@ -72,16 +72,6 @@ pub struct ServerPlayers {
     pub sample: Option<Vec<ServerPlayer>>,
 }
 
-/// The MOTD of a pinged server within the different formats.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum ServerDescription {
-    /// The MOTD was configured/reported with legacy formatting (plain text).
-    Plain(String),
-    /// The MOTD was configured/reported with text components (rich text).
-    Component { text: String },
-}
-
 /// The self-reported status of a pinged server with all public metadata.
 #[derive(Debug, Deserialize)]
 pub struct ServerStatus {
@@ -89,8 +79,6 @@ pub struct ServerStatus {
     pub version: ServerVersion,
     /// The current, maximum and sampled players of the server.
     pub players: ServerPlayers,
-    /// The MOTD (Motto Of The Day) of the server.
-    pub description: ServerDescription,
     /// The optional favicon of the server.
     pub favicon: Option<String>,
 }
@@ -151,7 +139,6 @@ pub async fn get_server_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ping::ServerDescription::{Component, Plain};
 
     #[test]
     fn deserialize_component_description() {
@@ -167,12 +154,6 @@ mod tests {
         assert_eq!(4, status.players.online);
         assert_eq!(6, status.players.max);
         assert_eq!(sample, status.players.sample);
-        match status.description {
-            Component { text: des } => assert_eq!("description text", des),
-            _ => {
-                panic!("unexpected description type")
-            }
-        };
         assert_eq!(favicon, status.favicon);
         assert_eq!(favicon, status.favicon);
     }
@@ -191,12 +172,6 @@ mod tests {
         assert_eq!(6, status.players.online);
         assert_eq!(8, status.players.max);
         assert_eq!(sample, status.players.sample);
-        match status.description {
-            Plain(des) => assert_eq!("description text 2", des),
-            _ => {
-                panic!("unexpected description type")
-            }
-        };
         assert_eq!(favicon, status.favicon);
     }
 }

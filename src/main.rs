@@ -2,6 +2,8 @@ mod ping;
 mod probe;
 mod protocol;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use crate::ping::{get_server_status, ProbeStatus};
 use crate::probe::ProbingInfo;
 use crate::probe::ResolutionResult::{Plain, Srv};
@@ -71,7 +73,7 @@ impl IntoResponse for Error {
 }
 
 impl IntoResponse for ProbeStatus {
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn into_response(self) -> Response {
         // return the generated metrics
         generate_metrics_response(1, |registry| {
@@ -95,6 +97,7 @@ impl IntoResponse for ProbeStatus {
             );
             address_srv.get_or_create(&()).set(i64::from(self.srv));
 
+            // online players (gauge)
             let players_online = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_online_total",
@@ -105,6 +108,7 @@ impl IntoResponse for ProbeStatus {
                 .get_or_create(&())
                 .set(self.status.players.online);
 
+            // max players (gauge)
             let players_max = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_max_total",
@@ -113,6 +117,7 @@ impl IntoResponse for ProbeStatus {
             );
             players_max.get_or_create(&()).set(self.status.players.max);
 
+            // sample players (gauge)
             let players_samples_count = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_samples_total",
@@ -126,6 +131,7 @@ impl IntoResponse for ProbeStatus {
                     .map_or_else(|| 0usize, |s| s.len()) as u32,
             );
 
+            // protocol version (gauge)
             let protocol_version = Family::<(), Gauge>::default();
             registry.register(
                 "protocol_version_info",
@@ -136,6 +142,20 @@ impl IntoResponse for ProbeStatus {
                 .get_or_create(&())
                 .set(self.status.version.protocol);
 
+            // protocol version (gauge)
+            let mut hasher = DefaultHasher::new();
+            self.status.version.name.hash(&mut hasher);
+            let protocol_hash = Family::<(), Gauge>::default();
+            registry.register(
+                "protocol_version_hash",
+                "The numeric hash of the visual network protocol",
+                protocol_hash.clone(),
+            );
+            protocol_hash
+                .get_or_create(&())
+                .set(hasher.finish() as i64);
+
+            // favicon bytes (gauge)
             let favicon_bytes = Family::<(), Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "favicon_bytes",
