@@ -6,10 +6,9 @@
 //! observed outcome is the same and the result is reliable.
 
 use std::io::Cursor;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 /// The internal error type for all errors related to the protocol communication
@@ -37,6 +36,9 @@ pub enum Error {
     /// An error occurred with the payload of a ping.
     #[error("mismatched payload value: {actual} (expected {expected})")]
     PayloadMismatch { expected: u64, actual: u64 },
+    /// The current time is before the unix epoch: should not happen.
+    #[error("unix epoch could not be calculated: {0}")]
+    TimeUnavailable(#[from] SystemTimeError),
 }
 
 /// State is the desired state that the connection should be in after the initial handshake.
@@ -225,78 +227,6 @@ impl InboundPacket for PongPacket {
     }
 }
 
-/// AsyncReadPacket allows reading a specific [InboundPacket] from an [AsyncWrite].
-///
-/// Only [InboundPackets][InboundPacket] can be read as only those packets are received. There are additional
-/// methods to read the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
-/// [write implementation][AsyncWritePacket].
-trait AsyncReadPacket {
-    /// Reads the supplied [InboundPacket] type from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
-    async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error>;
-
-    /// Reads a VarInt from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
-    async fn read_varint(&mut self) -> Result<usize, Error>;
-
-    /// Reads a String from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
-    async fn read_string(&mut self) -> Result<String, Error>;
-}
-
-impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
-    async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error> {
-        // extract the length of the packet and check for any following content
-        let length = self.read_varint().await?;
-        if length == 0 {
-            return Err(Error::IllegalPacketLength);
-        }
-
-        // extract the encoded packet id and validate if it is expected
-        let packet_id = self.read_varint().await?;
-        let expected_packet_id = T::get_packet_id();
-        if packet_id != expected_packet_id {
-            return Err(Error::IllegalPacketId {
-                expected: expected_packet_id,
-                actual: packet_id,
-            });
-        }
-
-        // read the remaining content of the packet into a new buffer
-        let mut buffer = vec![0; length - 1];
-        self.read_exact(&mut buffer).await?;
-
-        // convert the received buffer into our expected packet
-        T::new_from_buffer(buffer).await
-    }
-
-    async fn read_varint(&mut self) -> Result<usize, Error> {
-        let mut read = 0;
-        let mut result = 0;
-        loop {
-            let read_value = self.read_u8().await?;
-            let value = read_value & 0b0111_1111;
-            result |= (value as usize) << (7 * read);
-            read += 1;
-            if read > 5 {
-                return Err(Error::InvalidVarInt);
-            }
-            if (read_value & 0b1000_0000) == 0 {
-                return Ok(result);
-            }
-        }
-    }
-
-    async fn read_string(&mut self) -> Result<String, Error> {
-        let length = self.read_varint().await?;
-
-        let mut buffer = vec![0; length];
-        self.read_exact(&mut buffer).await?;
-
-        String::from_utf8(buffer).map_err(|_| Error::InvalidEncoding)
-    }
-}
-
 /// AsyncWritePacket allows writing a specific [OutboundPacket] to an [AsyncWrite].
 ///
 /// Only [OutboundPackets][OutboundPacket] can be written as only those packets are sent. There are additional
@@ -371,6 +301,78 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
     }
 }
 
+/// AsyncReadPacket allows reading a specific [InboundPacket] from an [AsyncWrite].
+///
+/// Only [InboundPackets][InboundPacket] can be read as only those packets are received. There are additional
+/// methods to read the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
+/// [write implementation][AsyncWritePacket].
+trait AsyncReadPacket {
+    /// Reads the supplied [InboundPacket] type from this object as described in the official
+    /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
+    async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error>;
+
+    /// Reads a VarInt from this object as described in the official
+    /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
+    async fn read_varint(&mut self) -> Result<usize, Error>;
+
+    /// Reads a String from this object as described in the official
+    /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
+    async fn read_string(&mut self) -> Result<String, Error>;
+}
+
+impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
+    async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error> {
+        // extract the length of the packet and check for any following content
+        let length = self.read_varint().await?;
+        if length == 0 {
+            return Err(Error::IllegalPacketLength);
+        }
+
+        // extract the encoded packet id and validate if it is expected
+        let packet_id = self.read_varint().await?;
+        let expected_packet_id = T::get_packet_id();
+        if packet_id != expected_packet_id {
+            return Err(Error::IllegalPacketId {
+                expected: expected_packet_id,
+                actual: packet_id,
+            });
+        }
+
+        // read the remaining content of the packet into a new buffer
+        let mut buffer = vec![0; length - 1];
+        self.read_exact(&mut buffer).await?;
+
+        // convert the received buffer into our expected packet
+        T::new_from_buffer(buffer).await
+    }
+
+    async fn read_varint(&mut self) -> Result<usize, Error> {
+        let mut read = 0;
+        let mut result = 0;
+        loop {
+            let read_value = self.read_u8().await?;
+            let value = read_value & 0b0111_1111;
+            result |= (value as usize) << (7 * read);
+            read += 1;
+            if read > 5 {
+                return Err(Error::InvalidVarInt);
+            }
+            if (read_value & 0b1000_0000) == 0 {
+                return Ok(result);
+            }
+        }
+    }
+
+    async fn read_string(&mut self) -> Result<String, Error> {
+        let length = self.read_varint().await?;
+
+        let mut buffer = vec![0; length];
+        self.read_exact(&mut buffer).await?;
+
+        String::from_utf8(buffer).map_err(|_| Error::InvalidEncoding)
+    }
+}
+
 /// The necessary information that will be reported to the server on a handshake of the Server List Ping protocol.
 pub struct HandshakeInfo {
     /// The intended protocol version.
@@ -397,10 +399,10 @@ impl HandshakeInfo {
 /// [StatusResponse][StatusResponsePacket] from the server. This response is in JSON and will not be interpreted by this
 /// function. The connection is not consumed by this operation, and the protocol allows for pings to be exchanged after
 /// the status has been returned.
-pub async fn retrieve_status(
-    stream: &mut TcpStream,
-    info: &HandshakeInfo,
-) -> Result<String, Error> {
+pub async fn retrieve_status<S>(stream: &mut S, info: &HandshakeInfo) -> Result<String, Error>
+where
+    S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
+{
     // create a new handshake packet and send it
     let handshake = HandshakePacket::new(
         info.protocol_version,
@@ -424,12 +426,15 @@ pub async fn retrieve_status(
 /// This sends the [Ping][PingPacket] and awaits the response of the [Pong][PongPacket], while recording the time it
 /// takes to get a response. From this recorded RTT (Round-Trip-Time) the latency is calculated by dividing this value
 /// by two. This is the most accurate way to measure the ping we can use.
-pub async fn execute_ping(stream: &mut TcpStream) -> Result<Duration, Error> {
+pub async fn execute_ping<S>(stream: &mut S) -> Result<Duration, Error>
+where
+    S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
+{
     // create a new value for the payload (to distinguish it)
     let payload = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Time since epoch could not be retrieved")
-        .as_secs();
+        .map(|val| val.as_secs())
+        .map_err(Error::TimeUnavailable)?;
 
     // record the current time to get the round trip time
     let start = Instant::now();
@@ -454,4 +459,312 @@ pub async fn execute_ping(stream: &mut TcpStream) -> Result<Duration, Error> {
     }
 
     Ok(duration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn packet_ids_valid() {
+        assert_eq!(HandshakePacket::get_packet_id(), 0x00);
+        assert_eq!(StatusRequestPacket::get_packet_id(), 0x00);
+        assert_eq!(StatusResponsePacket::get_packet_id(), 0x00);
+        assert_eq!(PingPacket::get_packet_id(), 0x01);
+        assert_eq!(PongPacket::get_packet_id(), 0x01);
+    }
+
+    #[tokio::test]
+    async fn serialize_handshake() {
+        let packet = HandshakePacket::new(13, "test".to_string(), 5);
+        let packet_buffer = packet.to_buffer().await.unwrap();
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+
+        let version = buffer.read_varint().await.unwrap();
+        assert_eq!(version as isize, packet.protocol_version);
+
+        let server_address = buffer.read_string().await.unwrap();
+        assert_eq!(server_address, packet.server_address);
+
+        let server_port = buffer.read_u16().await.unwrap();
+        assert_eq!(server_port, packet.server_port);
+
+        let state = buffer.read_varint().await.unwrap();
+        assert_eq!(state, usize::from(packet.next_state));
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn serialize_status_request() {
+        let packet = StatusRequestPacket::new();
+        let packet_buffer = packet.to_buffer().await.unwrap();
+        let buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn deserialize_status_response() {
+        let body = "{\"some\": \"values\"}";
+
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        buffer.write_string(body).await.unwrap();
+        let packet = StatusResponsePacket::new_from_buffer(buffer.get_ref().clone())
+            .await
+            .unwrap();
+        assert_eq!(packet.body, body);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn serialize_ping() {
+        // write the packet into a buffer and box it as a slice (sized)
+        let packet = PingPacket::new(17);
+        let packet_buffer = packet.to_buffer().await.unwrap();
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+
+        let payload = buffer.read_u64().await.unwrap();
+        assert_eq!(payload, packet.payload);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn deserialize_pong() {
+        let payload = 11u64;
+
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        buffer.write_u64(payload).await.unwrap();
+        let packet = PongPacket::new_from_buffer(buffer.get_ref().clone())
+            .await
+            .unwrap();
+        assert_eq!(packet.payload, payload);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_packet() {
+        let packet = PingPacket::new(17);
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_packet(packet).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        let length = buffer.read_varint().await.unwrap();
+        assert_eq!(length, 9);
+
+        let packet_id = buffer.read_varint().await.unwrap();
+        assert_eq!(packet_id, 0x01);
+
+        let payload = buffer.read_u64().await.unwrap();
+        assert_eq!(payload, 17);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_packet() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(9).await.unwrap();
+        writer.write_varint(0x01).await.unwrap();
+        writer.write_u64(11).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        let packet = buffer.read_packet::<PongPacket>().await.unwrap();
+        assert_eq!(packet.payload, 11);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn fail_read_packet_illegal_packet_id() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(9).await.unwrap();
+        writer.write_varint(0x00).await.unwrap();
+        writer.write_u64(11).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        buffer.read_packet::<PongPacket>().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn fail_read_packet_illegal_packet_length() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(0).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        buffer.read_packet::<PongPacket>().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_varint() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(0usize).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let first_byte = buffer.read_u8().await.unwrap();
+        assert_eq!(first_byte, 0b0000_0000);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(65usize).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let first_byte = buffer.read_u8().await.unwrap();
+        assert_eq!(first_byte, 0b0100_0001);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(129usize).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let first_byte = buffer.read_u8().await.unwrap();
+        let second_byte = buffer.read_u8().await.unwrap();
+        assert_eq!(first_byte, 0b1000_0001);
+        assert_eq!(second_byte, 0b0000_0001);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_varint() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_u8(0b0000_0000).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let number = buffer.read_varint().await.unwrap();
+        assert_eq!(number, 0usize);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_u8(0b0100_0001).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let number = buffer.read_varint().await.unwrap();
+        assert_eq!(number, 65usize);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_u8(0b1000_0001).await.unwrap();
+        writer.write_u8(0b0000_0001).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        let number = buffer.read_varint().await.unwrap();
+        assert_eq!(number, 129usize);
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn fail_read_varint_invalid() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_u8(0b1000_0000).await.unwrap();
+        writer.write_u8(0b1000_0000).await.unwrap();
+        writer.write_u8(0b1000_0000).await.unwrap();
+        writer.write_u8(0b1000_0000).await.unwrap();
+        writer.write_u8(0b1000_0000).await.unwrap();
+        writer.write_u8(0b1000_0000).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        buffer.read_varint().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_string() {
+        let text = "test";
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_string(text).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        let length = buffer.read_varint().await.unwrap();
+        assert_eq!(length, text.len());
+
+        let mut content = vec![0; length];
+        buffer.read_exact(&mut content).await.unwrap();
+        assert_eq!(String::from_utf8(content).unwrap(), text);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_string() {
+        let text = "other";
+
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(text.len()).await.unwrap();
+        writer.write_all(text.as_bytes()).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+
+        let content = buffer.read_string().await.unwrap();
+        assert_eq!(content, text);
+
+        assert_eq!(
+            buffer.position() as usize,
+            buffer.get_ref().len(),
+            "There are remaining bytes in the buffer"
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn fail_read_string_illegal_encoding() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(4).await.unwrap();
+        writer.write_all(&[0u8, 159u8, 146u8, 150u8]).await.unwrap();
+        let mut buffer = Cursor::new(writer.get_ref());
+        buffer.read_string().await.unwrap();
+    }
 }
