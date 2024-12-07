@@ -29,13 +29,23 @@ pub enum Error {
     InvalidVarInt,
     /// The received packet ID is not mapped to an expected packet.
     #[error("illegal packet ID: {actual} (expected {expected})")]
-    IllegalPacketId { expected: usize, actual: usize },
+    IllegalPacketId {
+        /// The expected value that should be present.
+        expected: usize,
+        /// The actual value that was observed.
+        actual: usize,
+    },
     /// The JSON response of the status packet is incorrectly encoded (not UTF-8).
     #[error("invalid ServerListPing response body (invalid encoding)")]
     InvalidEncoding,
     /// An error occurred with the payload of a ping.
     #[error("mismatched payload value: {actual} (expected {expected})")]
-    PayloadMismatch { expected: u64, actual: u64 },
+    PayloadMismatch {
+        /// The expected value that should be present.
+        expected: u64,
+        /// The actual value that was observed.
+        actual: u64,
+    },
     /// The current time is before the unix epoch: should not happen.
     #[error("unix epoch could not be calculated: {0}")]
     TimeUnavailable(#[from] SystemTimeError),
@@ -44,6 +54,7 @@ pub enum Error {
 /// State is the desired state that the connection should be in after the initial handshake.
 #[derive(Clone, Copy)]
 enum State {
+    /// The status state that is used to query server information without connecting.
     Status,
 }
 
@@ -271,8 +282,8 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
         Ok(())
     }
 
-    async fn write_varint(&mut self, int: usize) -> Result<(), Error> {
-        let mut int = (int as u64) & 0xFFFF_FFFF;
+    async fn write_varint(&mut self, value: usize) -> Result<(), Error> {
+        let mut int = (value as u64) & 0xFFFF_FFFF;
         let mut written = 0;
         let mut buffer = [0; 5];
         loop {
@@ -384,6 +395,7 @@ pub struct HandshakeInfo {
 }
 
 impl HandshakeInfo {
+    /// Creates a new [`HandshakeInfo`] with the supplied values for the server handshake.
     pub const fn new(protocol_version: isize, server_address: String, server_port: u16) -> Self {
         Self {
             protocol_version,
