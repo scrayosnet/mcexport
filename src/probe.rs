@@ -15,10 +15,10 @@ use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 use tracing::log::debug;
 
-/// The internal error type for all [ProbingInfo] related errors.
+/// The internal error type for all [`ProbingInfo`] related errors.
 ///
-/// This includes errors with the resolution of the [TargetAddress] or any other errors that may occur while trying to
-/// make sense of the supplied probe target information. Any [Error] results in mcexport not being able to perform
+/// This includes errors with the resolution of the [`TargetAddress`] or any other errors that may occur while trying to
+/// make sense of the supplied probe target information. Any [`Error`] results in mcexport not being able to perform
 /// any ping of the desired probe.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -30,12 +30,15 @@ pub enum Error {
     CouldNotResolveIp(String),
 }
 
-/// ResolutionResult is the outcome of a DNS resolution for a supplied [TargetAddress].
+/// `ResolutionResult` is the outcome of a DNS resolution for a supplied [`TargetAddress`].
 ///
-/// The result holds the final resolved [SocketAddr] of a supplied target [TargetAddress]. It is differentiated between a
-/// [plain][Plain] resolution, where no SRV record was found and the supplied hostname was directly resolved to the
-/// final IP-Address and an [SRV][Srv] resolution that was performed on the indirect hostname, resolved through the
-/// corresponding SRV record.
+/// The result holds the final resolved [`SocketAddr`] of a supplied target [`TargetAddress`]. It is differentiated
+/// between the different ways to retrieve the final address. A [`Plain`][plain] resolution, where no SRV record was
+/// found and the supplied hostname was directly resolved to the final IP-Address and an [`Srv`][srv] resolution that
+/// was performed on the indirect hostname, resolved through the corresponding SRV record.
+///
+/// [plain]: ResolutionResult::Plain
+/// [srv]: ResolutionResult::Srv
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResolutionResult {
     /// There was an SRV record and the resolved IP address is of the target hostname within this record.
@@ -44,7 +47,7 @@ pub enum ResolutionResult {
     Plain(SocketAddr),
 }
 
-/// ProbingInfo is the information supplied by Prometheus for each probe request.
+/// `ProbingInfo` is the information supplied by Prometheus for each probe request.
 ///
 /// This information is supplied for each probe request and needs to be used to ping the right target. We cannot handle
 /// requests that come without this query information. While the target address is mandatory, the module is completely
@@ -66,7 +69,7 @@ impl Display for ProbingInfo {
     }
 }
 
-/// TargetAddress is the combination of a hostname or textual IP address with a port.
+/// `TargetAddress` is the combination of a hostname or textual IP address with a port.
 ///
 /// This address should be used to issue a probing ping. The information comes from the request of Prometheus and needs
 /// to be validated and parsed before it can be used. To get the real target address, the hostname needs to be resolved
@@ -82,9 +85,9 @@ pub struct TargetAddress {
 impl TargetAddress {
     /// Converts this hostname and port to the resolved [socket address][SocketAddr].
     ///
-    /// The [hostname][ProbeAddress::hostname] of this address is resolved through DNS and is used as the IP address
-    /// of the resulting socket address. To do this, we also check the SRV record for minecraft (`_minecraft._tcp`) and
-    /// prefer to use this information. If any SRV record was found, the second return of this function will be true.
+    /// The hostname of this address is resolved through DNS and is used as the IP address of the resulting socket
+    /// address. To do this, we also check the SRV record for minecraft (`_minecraft._tcp`) and prefer to use this
+    /// information. If any SRV record was found, the second return of this function will be true.
     pub async fn to_socket_addrs(
         &self,
         resolver: &TokioAsyncResolver,
@@ -140,14 +143,14 @@ impl Display for TargetAddress {
     }
 }
 
-/// The visitor for the deserialization of [TargetAddress].
+/// The visitor for the deserialization of [`TargetAddress`].
 ///
-/// This visitor is responsible for the deserialization and validation of a [TargetAddress] and returns the appropriate
-/// expectations of the format. The address is expected in the format of `hostname:port` and the port is optional,
-/// falling back to the default port.
+/// This visitor is responsible for the deserialization and validation of a [`TargetAddress`] and returns the
+/// appropriate expectations of the format. The address is expected in the format of `hostname:port` and the port is
+/// optional, falling back to the default port.
 struct ProbeAddressVisitor;
 
-impl<'de> Visitor<'de> for ProbeAddressVisitor {
+impl Visitor<'_> for ProbeAddressVisitor {
     type Value = TargetAddress;
 
     fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
