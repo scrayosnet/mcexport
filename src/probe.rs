@@ -36,7 +36,7 @@ pub enum Error {
 /// between the different ways to retrieve the final address. A [`Plain`][plain] resolution, where no SRV record was
 /// found and the supplied hostname was directly resolved to the final IP-Address and an [`Srv`][srv] resolution that
 /// was performed on the indirect hostname, resolved through the corresponding SRV record.
-/// 
+///
 /// [plain]: ResolutionResult::Plain
 /// [srv]: ResolutionResult::Srv
 #[derive(Debug, PartialEq, Eq)]
