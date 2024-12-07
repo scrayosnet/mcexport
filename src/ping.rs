@@ -16,7 +16,7 @@ use tokio::net::TcpStream;
 
 /// The (at the time of the last release) most recent, supported protocol version.
 ///
-/// As per the [Server List Ping][https://wiki.vg/Server_List_Ping#Handshake] documentation, it is a convention to use
+/// As per the [Server List Ping](https://wiki.vg/Server_List_Ping#Handshake) documentation, it is a convention to use
 /// `-1` to determine the version of the server. It would therefore be ideal to use this value. However, it turned out
 /// that very few servers supported this convention, so we just go with the most recent version, which showed better
 /// results in all cases.
@@ -96,7 +96,7 @@ pub struct ProbeStatus {
 
 /// Requests the status of the supplied server and records the ping duration.
 ///
-/// This opens a new [TCP stream][TcpStream] and performs a [Server List Ping][https://wiki.vg/Server_List_Ping]
+/// This opens a new [TCP stream][TcpStream] and performs a [Server List Ping](https://wiki.vg/Server_List_Ping)
 /// exchange, including the general handshake, status request, and ping protocol. If any error with the underlying
 /// connection or the communication protocol is encountered, the request is interrupted immediately. The connection is
 /// closed after the ping interaction. If the async interaction is stopped, the connection will also be terminated

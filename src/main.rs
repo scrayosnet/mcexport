@@ -3,41 +3,30 @@ mod probe;
 mod protocol;
 
 use crate::ping::{get_server_status, ProbeStatus};
-use crate::probe::ProbingInfo;
 use crate::probe::ResolutionResult::{Plain, Srv};
-use crate::TimeoutError::NegativeDuration;
-use axum::body::Body;
+use crate::{probe::ProbingInfo, TimeoutError::NegativeDuration};
 use axum::extract::{Query, State};
 use axum::http::header::{ToStrError, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::{body::Body, routing::get, Router};
 use hickory_resolver::TokioAsyncResolver;
-use prometheus_client::encoding::text::encode;
-use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
+use prometheus_client::{encoding::text::encode, metrics::family::Family, metrics::gauge::Gauge};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::net::SocketAddr;
-use std::num::ParseFloatError;
 use std::sync::atomic::{AtomicU32, AtomicU64};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::time::timeout;
+use std::{net::SocketAddr, num::ParseFloatError, sync::Arc, time::Duration};
+use tokio::{net::TcpListener, time::timeout};
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument, warn};
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_subscriber::{fmt, Layer};
 
 /// The name of the request header from Prometheus, that sets the scrape timeout.
 ///
 /// This header should always be present on requests from Prometheus and can contain floating point numbers. This time
-/// is the overall scraping time allocated for this probe request. Therefore, the [TIMEOUT_OFFSET_SECS] is subtracted
+/// is the overall scraping time allocated for this probe request. Therefore, the [`TIMEOUT_OFFSET_SECS`] is subtracted
 /// from the time to account for network latency and other processing overheads, not part of the timeout.
 const SCRAPE_TIMEOUT_HEADER: &str = "X-Prometheus-Scrape-Timeout-Seconds";
 
@@ -82,7 +71,7 @@ enum TimeoutError {
     NegativeDuration { original: f64, result: f64 },
 }
 
-/// AppState contains various, shared resources for the state of the application.
+/// `AppState` contains various, shared resources for the state of the application.
 ///
 /// The state of the application can be shared across all requests to benefit from their caching, resource consumption
 /// and configuration. The access is handled through [Arc], allowing for multiple threads to use the same resource
@@ -253,14 +242,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// mcexport is still running as expected. Since mcexport is stateless and has no permanent connections, this endpoint
 /// can accurately reflect the readiness and liveness of mcexport.
 #[instrument]
-async fn handle_root() -> Response {
-    Html("mcexport - <a href=\"/probe\">Probe</a>").into_response()
+async fn handle_root() -> Html<&'static str> {
+    Html("mcexport - <a href=\"/probe\">Probe</a>")
 }
 
 /// Handles and answers all axum requests on the probing path "/probe".
 ///
 /// This endpoint is invoked by Prometheus' probing requests and issues pings to the requested targets. Prometheus will
-/// send [info][ProbeInfo] on the corresponding target, and this endpoint will answer with the status and metrics of
+/// send [info][ProbingInfo] on the corresponding target, and this endpoint will answer with the status and metrics of
 /// this ping operation. The ping is only started once the request comes in and Prometheus is responsible for scheduling
 /// the requests to this endpoint regularly.
 #[instrument(skip(state, info), fields(target = %info.target, module = %info.module.clone().unwrap_or_else(|| "-".to_string())
@@ -347,11 +336,11 @@ where
 
 /// Returns the desired request timeout for the probe endpoint from the supplied headers.
 ///
-/// If the [SCRAPE_TIMEOUT_HEADER] is set, the value is parsed into a floating point number, that is interpreted as
-/// the duration in seconds, that will be allowed for the request. Should no such header exist, the
-/// [DEFAULT_TIMEOUT_SECS] is used instead. The duration is then reduced by [TIMEOUT_OFFSET_SECS] to account for the
+/// If the [`SCRAPE_TIMEOUT_HEADER`] is set, the value is parsed into a floating point number, which is interpreted as
+/// the duration in seconds and will be allowed for the request. Should no such header exist, the
+/// [`DEFAULT_TIMEOUT_SECS`] is used instead. The duration is then reduced by [`TIMEOUT_OFFSET_SECS`] to account for the
 /// network latency and processing overhead that does not count into the timeout. This method never returns a negative
-/// duration and instead returns a [NegativeDuration].
+/// duration and instead returns a [`NegativeDuration`].
 fn get_timeout_duration(headers: &HeaderMap) -> Result<Duration, TimeoutError> {
     // try to use the header value to parse the duration
     let header = headers.get(SCRAPE_TIMEOUT_HEADER);

@@ -24,7 +24,7 @@ pub enum Error {
     /// The received packet is of an invalid length that we cannot process.
     #[error("illegal packet length")]
     IllegalPacketLength,
-    /// The received VarInt cannot be correctly decoded (was formed incorrectly).
+    /// The received `VarInt` cannot be correctly decoded (was formed incorrectly).
     #[error("invalid VarInt data")]
     InvalidVarInt,
     /// The received packet ID is not mapped to an expected packet.
@@ -61,13 +61,13 @@ trait Packet {
     fn get_packet_id() -> usize;
 }
 
-/// OutboundPackets are packets that are written and therefore have a fixed, specific packet ID.
+/// `OutboundPacket`s are packets that are written and therefore have a fixed, specific packet ID.
 trait OutboundPacket: Packet {
     /// Creates a new buffer with the data from this packet.
     async fn to_buffer(&self) -> Result<Vec<u8>, Error>;
 }
 
-/// InboundPackets are packets that are read and therefore are expected to be of a specific packet ID.
+/// `InboundPacket`s are packets that are read and therefore are expected to be of a specific packet ID.
 trait InboundPacket: Packet + Sized {
     /// Creates a new instance of this packet with the data from the buffer.
     async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error>;
@@ -89,7 +89,7 @@ struct HandshakePacket {
 }
 
 impl HandshakePacket {
-    /// Creates a new [HandshakePacket] with the supplied client information.
+    /// Creates a new [`HandshakePacket`] with the supplied client information.
     const fn new(protocol_version: isize, server_address: String, server_port: u16) -> Self {
         Self {
             protocol_version,
@@ -120,14 +120,14 @@ impl OutboundPacket for HandshakePacket {
     }
 }
 
-/// This packet will be sent after the [HandshakePacket] and requests the server metadata.
+/// This packet will be sent after the [`HandshakePacket`] and requests the server metadata.
 ///
-/// The packet can only be sent after the [HandshakePacket] and must be written before any status information can be
+/// The packet can only be sent after the [`HandshakePacket`] and must be written before any status information can be
 /// read, as this is the differentiator between the status and the ping sequence.
 struct StatusRequestPacket;
 
 impl StatusRequestPacket {
-    /// Creates a new [StatusRequestPacket].
+    /// Creates a new [`StatusRequestPacket`].
     const fn new() -> Self {
         Self
     }
@@ -145,9 +145,9 @@ impl OutboundPacket for StatusRequestPacket {
     }
 }
 
-/// This is the response for a specific [StatusRequestPacket] that contains all self-reported metadata.
+/// This is the response for a specific [`StatusRequestPacket`] that contains all self-reported metadata.
 ///
-/// This packet can be received only after a [StatusRequestPacket] and will not close the connection, allowing for a
+/// This packet can be received only after a [`StatusRequestPacket`] and will not close the connection, allowing for a
 /// ping sequence to be exchanged afterward.
 struct StatusResponsePacket {
     /// The JSON response body that contains all self-reported server metadata.
@@ -170,17 +170,17 @@ impl InboundPacket for StatusResponsePacket {
     }
 }
 
-/// This is the request for a specific [PongPacket] that can be used to measure the server ping.
+/// This is the request for a specific [`PongPacket`] that can be used to measure the server ping.
 ///
-/// This packet can be sent after a connection was established or the [StatusResponsePacket] was received. Initiating
-/// the ping sequence will consume the connection after the [PongPacket] was received.
+/// This packet can be sent after a connection was established or the [`StatusResponsePacket`] was received. Initiating
+/// the ping sequence will consume the connection after the [`PongPacket`] was received.
 struct PingPacket {
     /// The arbitrary payload that will be returned from the server (to identify the corresponding request).
     payload: u64,
 }
 
 impl PingPacket {
-    /// Creates a new [PingPacket] with the supplied payload.
+    /// Creates a new [`PingPacket`] with the supplied payload.
     const fn new(payload: u64) -> Self {
         Self { payload }
     }
@@ -202,9 +202,9 @@ impl OutboundPacket for PingPacket {
     }
 }
 
-/// This is the response to a specific [PingPacket] that can be used to measure the server ping.
+/// This is the response to a specific [`PingPacket`] that can be used to measure the server ping.
 ///
-/// This packet can be received after a corresponding [PingPacket] and will have the same payload as the request. This
+/// This packet can be received after a corresponding [`PingPacket`] and will have the same payload as the request. This
 /// also consumes the connection, ending the Server List Ping sequence.
 struct PongPacket {
     /// The arbitrary payload that was sent from the client (to identify the corresponding response).
@@ -227,24 +227,24 @@ impl InboundPacket for PongPacket {
     }
 }
 
-/// AsyncWritePacket allows writing a specific [OutboundPacket] to an [AsyncWrite].
+/// `AsyncWritePacket` allows writing a specific [`OutboundPacket`] to an [`AsyncWrite`].
 ///
-/// Only [OutboundPackets][OutboundPacket] can be written as only those packets are sent. There are additional
+/// Only [`OutboundPacket`s](OutboundPacket) can be written as only those packets are sent. There are additional
 /// methods to write the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
-/// [read implementation][AsyncReadPacket].
+/// [read implementation](AsyncReadPacket).
 trait AsyncWritePacket {
-    /// Writes the supplied [OutboundPacket] onto this object as described in the official
+    /// Writes the supplied [`OutboundPacket`] onto this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
     async fn write_packet<T: OutboundPacket + Send + Sync>(
         &mut self,
         packet: T,
     ) -> Result<(), Error>;
 
-    /// Writes a VarInt onto this object as described in the official
+    /// Writes a `VarInt` onto this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
     async fn write_varint(&mut self, int: usize) -> Result<(), Error>;
 
-    /// Writes a String onto this object as described in the official
+    /// Writes a `String` onto this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
     async fn write_string(&mut self, string: &str) -> Result<(), Error>;
 }
@@ -301,21 +301,21 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
     }
 }
 
-/// AsyncReadPacket allows reading a specific [InboundPacket] from an [AsyncWrite].
+/// `AsyncReadPacket` allows reading a specific [`InboundPacket`] from an [`AsyncWrite`].
 ///
-/// Only [InboundPackets][InboundPacket] can be read as only those packets are received. There are additional
+/// Only [`InboundPacket`s](InboundPacket) can be read as only those packets are received. There are additional
 /// methods to read the data that is encoded in a Minecraft-specific manner. Their implementation is analogous to the
-/// [write implementation][AsyncWritePacket].
+/// [write implementation](AsyncWritePacket).
 trait AsyncReadPacket {
-    /// Reads the supplied [InboundPacket] type from this object as described in the official
+    /// Reads the supplied [`InboundPacket`] type from this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
     async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error>;
 
-    /// Reads a VarInt from this object as described in the official
+    /// Reads a `VarInt` from this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
     async fn read_varint(&mut self) -> Result<usize, Error>;
 
-    /// Reads a String from this object as described in the official
+    /// Reads a `String` from this object as described in the official
     /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
     async fn read_string(&mut self) -> Result<String, Error>;
 }
@@ -395,10 +395,10 @@ impl HandshakeInfo {
 
 /// Performs the status protocol exchange and returns the self-reported server status.
 ///
-/// This sends the [Handshake][HandshakePacket] and the [StatusRequest][StatusRequestPacket] packet and awaits the
-/// [StatusResponse][StatusResponsePacket] from the server. This response is in JSON and will not be interpreted by this
-/// function. The connection is not consumed by this operation, and the protocol allows for pings to be exchanged after
-/// the status has been returned.
+/// This sends the [`Handshake`](HandshakePacket) and the [`StatusRequest`](StatusRequestPacket) packet and awaits the
+/// [`StatusResponse`](StatusResponsePacket) from the server. This response is in JSON and will not be interpreted by
+/// this function. The connection is not consumed by this operation, and the protocol allows for pings to be exchanged
+/// after the status has been returned.
 pub async fn retrieve_status<S>(stream: &mut S, info: &HandshakeInfo) -> Result<String, Error>
 where
     S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
