@@ -61,10 +61,10 @@ pub struct ProbingInfo {
 }
 
 impl Display for ProbingInfo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match &self.module {
-            Some(module) => write!(f, "{} ({})", self.target, module),
-            _ => write!(f, "{}", self.target),
+            Some(module) => write!(formatter, "{} ({})", self.target, module),
+            _ => write!(formatter, "{}", self.target),
         }
     }
 }
@@ -99,7 +99,7 @@ impl TargetAddress {
 
         // check if any SRV record was present (use this data then)
         let (hostname, port, srv_used) = if let Ok(response) = srv_response {
-            if let Some(record) = response.iter().find_map(|r| r.as_srv()) {
+            if let Some(record) = response.iter().find_map(|rec| rec.as_srv()) {
                 let target = record.target().to_utf8();
                 let target_port = record.port();
                 debug!(
@@ -138,8 +138,8 @@ impl TargetAddress {
 }
 
 impl Display for TargetAddress {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.hostname, self.port)
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}:{}", self.hostname, self.port)
     }
 }
 
@@ -177,23 +177,23 @@ impl Visitor<'_> for ProbeAddressVisitor {
 
         // check if the hostname is present
         if hostname.is_empty() {
-            Err(de::Error::invalid_value(
+            return Err(de::Error::invalid_value(
                 Unexpected::Str(hostname),
                 &"a non-empty hostname",
-            ))?;
+            ));
         }
 
         // check if the port is valid
         if port == 0 {
-            Err(de::Error::invalid_value(
+            return Err(de::Error::invalid_value(
                 Unexpected::Unsigned(port.into()),
                 &"a positive port number",
-            ))?;
+            ));
         }
 
         // wrap the parsed parts into our ProbeAddress
         Ok(TargetAddress {
-            hostname: hostname.to_string(),
+            hostname: hostname.to_owned(),
             port,
         })
     }

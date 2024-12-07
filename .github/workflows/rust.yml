@@ -2,46 +2,77 @@ name: Rust
 
 on:
   push:
-    branches:
-    - main
-    tags:
-    - v*
   pull_request:
-    branches:
-    - main
+  schedule:
+  - cron: '0 0 * * 0'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    permissions:
-      contents: read
-      security-events: write
+  checks:
+    name: Check
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+        - 'stable'
+        - 'beta'
+        - '1.75.0'
     steps:
 
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Apply caching
-      uses: swatinem/rust-cache@v2
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
 
-    - name: Install required cargo
-      run: cargo install clippy-sarif sarif-fmt
+    - name: Check build
+      run: cargo check --workspace
 
-    - name: Build with cargo
-      run: cargo build --verbose
+  lints:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
 
-    - name: Run tests with cargo
-      run: cargo test --verbose --all-features
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Check format
-      run: cargo fmt --check
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: common
+
+    - name: Install required cargo crates
+      run: cargo install --locked clippy-sarif sarif-fmt cargo-machete cargo-deny
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Check documentation
+      run: cargo doc --workspace --no-deps
+
+    - name: Check dependencies
+      run: cargo machete --with-metadata
+
+    - name: Check licenses and security
+      run: cargo deny check
 
     - name: Perform linting
       run:
         cargo clippy
+        --workspace
         --all-features
         --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
       continue-on-error: true
@@ -54,3 +85,31 @@ jobs:
 
     - name: Perform audit
       run: cargo audit
+
+  tests:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [checks, lints]
+    strategy:
+      matrix:
+        rust:
+        - 'stable'
+        - 'beta'
+        - '1.75.0'
+    steps:
+
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: common
+
+    - name: Run tests
+      run: cargo test --workspace --verbose --all-features

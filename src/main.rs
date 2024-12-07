@@ -1,3 +1,23 @@
+//! A Minecraft server Prometheus multi-target exporter.
+//!
+//! This application uses the [Multi-Target Exporter Pattern](https://prometheus.io/docs/guides/multi-target-exporter/)
+//! to ping and process each target individually. This improves the error handling, as well as the individual timeouts
+//! and overall efficiency. Different targets can be pinged with different protocol versions and varying timeouts
+//! independent of each other. Therefore, errors within one ping operation cannot affect other targets and their
+//! response and state can be returned directly.
+//!
+//! Prometheus is responsible for scheduling the probe requests as well as possible, and all configuration is performed
+//! within Prometheus as well. Therefore, mcexport has no knowledge regarding the list of targets and their individual
+//! timeouts. Instead, the targets are requested one-by-one and the appropriate timeout is taken from a specific header
+//! in the request. The processing has to be interrupted some time earlier, to account for latency and handling.
+//!
+//! The protocol implementation is compatible with all Minecraft: Java Edition servers from version 1.7 up. It is
+//! expected that the servers strictly follow the protocol specification and appropriately return the expected values
+//! at a given time. If the servers fail to do so, the probe requests are marked as unsuccessful.
+
+#![deny(clippy::all)]
+#![forbid(unsafe_code)]
+
 mod ping;
 mod probe;
 mod protocol;
@@ -68,7 +88,12 @@ enum TimeoutError {
     InvalidNumber(#[source] ParseFloatError, String),
     /// The calculated timeout value would end up negative with the offset.
     #[error("the resulting duration ended up being negative: {result:?} (original {original:?})")]
-    NegativeDuration { original: f64, result: f64 },
+    NegativeDuration {
+        /// The original value that was supplied for the calculation.
+        original: f64,
+        /// The resulting value that was calculated based on the offset and the original.
+        result: f64,
+    },
 }
 
 /// `AppState` contains various, shared resources for the state of the application.
@@ -78,6 +103,7 @@ enum TimeoutError {
 /// without any problems regarding thread safety.
 #[derive(Debug)]
 struct AppState {
+    /// The resolver that will be used to dynamically resolve all target addresses.
     pub resolver: TokioAsyncResolver,
 }
 
@@ -157,7 +183,7 @@ impl IntoResponse for ProbeStatus {
                 self.status
                     .players
                     .sample
-                    .map_or_else(|| 0usize, |s| s.len()) as u32,
+                    .map_or_else(|| 0_usize, |samples| samples.len()) as u32,
             );
 
             // protocol version (gauge)
@@ -252,7 +278,7 @@ async fn handle_root() -> Html<&'static str> {
 /// send [info][ProbingInfo] on the corresponding target, and this endpoint will answer with the status and metrics of
 /// this ping operation. The ping is only started once the request comes in and Prometheus is responsible for scheduling
 /// the requests to this endpoint regularly.
-#[instrument(skip(state, info), fields(target = %info.target, module = %info.module.clone().unwrap_or_else(|| "-".to_string())
+#[instrument(skip(state, info), fields(target = %info.target, module = %info.module.clone().unwrap_or_else(|| "-".to_owned())
 ))]
 async fn handle_probe(
     headers: HeaderMap,
@@ -348,7 +374,7 @@ fn get_timeout_duration(headers: &HeaderMap) -> Result<Duration, TimeoutError> {
         let value = raw_value.to_str().map_err(TimeoutError::InvalidChars)?;
         value
             .parse::<f64>()
-            .map_err(|err| TimeoutError::InvalidNumber(err, value.to_string()))?
+            .map_err(|err| TimeoutError::InvalidNumber(err, value.to_owned()))?
     } else {
         DEFAULT_TIMEOUT_SECS
     };
@@ -395,20 +421,6 @@ mod tests {
             get_timeout_duration(&headers).unwrap(),
             Duration::from_secs_f64(5.5 - TIMEOUT_OFFSET_SECS)
         )
-    }
-
-    #[test]
-    #[should_panic]
-    fn fail_get_timeout_duration_with_invalid_header_str() {
-        let mut headers = HeaderMap::new();
-        unsafe {
-            headers.insert(
-                SCRAPE_TIMEOUT_HEADER,
-                HeaderValue::from_maybe_shared_unchecked(ILLEGAL_VALUE_BYTES.as_ref()),
-            );
-        }
-
-        get_timeout_duration(&headers).unwrap();
     }
 
     #[test]
