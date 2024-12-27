@@ -1,17 +1,20 @@
 //! This module defines and handles the Minecraft protocol and communication.
 //!
 //! This is necessary to exchange data with the target servers that should be probed. We only care about the packets
-//! related to the [ServerListPing](https://wiki.vg/Server_List_Ping) and therefore only implement that part of the
-//! Minecraft protocol. The implementations may differ from the official Minecraft client implementation if the
-//! observed outcome is the same and the result is reliable.
+//! related to the [ServerListPing][server-list-ping] and therefore only implement that part of the Minecraft protocol.
+//! The implementations may differ from the official Minecraft client implementation if the observed outcome is the same
+//! and the result is reliable.
+//!
+//! [server-list-ping]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Server_List_Ping
 
 use std::io::Cursor;
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
+use tracing::{debug, instrument};
 
-/// The internal error type for all errors related to the protocol communication
+/// The internal error type for all errors related to the protocol communication.
 ///
 /// This includes errors with the expected packets, packet contents or encoding of the exchanged fields. Errors of the
 /// underlying data layer (for Byte exchange) are wrapped from the underlying IO errors. Additionally, the internal
@@ -52,7 +55,7 @@ pub enum Error {
 }
 
 /// State is the desired state that the connection should be in after the initial handshake.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum State {
     /// The status state that is used to query server information without connecting.
     Status,
@@ -88,6 +91,7 @@ trait InboundPacket: Packet + Sized {
 ///
 /// The data in this packet can differ from the actual data that was used but will be considered by the server when
 /// assembling the response. Therefore, this data should mirror what a normal client would send.
+#[derive(Debug)]
 struct HandshakePacket {
     /// The pretended protocol version.
     protocol_version: isize,
@@ -135,6 +139,7 @@ impl OutboundPacket for HandshakePacket {
 ///
 /// The packet can only be sent after the [`HandshakePacket`] and must be written before any status information can be
 /// read, as this is the differentiator between the status and the ping sequence.
+#[derive(Debug)]
 struct StatusRequestPacket;
 
 impl StatusRequestPacket {
@@ -160,6 +165,7 @@ impl OutboundPacket for StatusRequestPacket {
 ///
 /// This packet can be received only after a [`StatusRequestPacket`] and will not close the connection, allowing for a
 /// ping sequence to be exchanged afterward.
+#[derive(Debug)]
 struct StatusResponsePacket {
     /// The JSON response body that contains all self-reported server metadata.
     body: String,
@@ -185,6 +191,7 @@ impl InboundPacket for StatusResponsePacket {
 ///
 /// This packet can be sent after a connection was established or the [`StatusResponsePacket`] was received. Initiating
 /// the ping sequence will consume the connection after the [`PongPacket`] was received.
+#[derive(Debug)]
 struct PingPacket {
     /// The arbitrary payload that will be returned from the server (to identify the corresponding request).
     payload: u64,
@@ -217,6 +224,7 @@ impl OutboundPacket for PingPacket {
 ///
 /// This packet can be received after a corresponding [`PingPacket`] and will have the same payload as the request. This
 /// also consumes the connection, ending the Server List Ping sequence.
+#[derive(Debug)]
 struct PongPacket {
     /// The arbitrary payload that was sent from the client (to identify the corresponding response).
     payload: u64,
@@ -245,18 +253,22 @@ impl InboundPacket for PongPacket {
 /// [read implementation](AsyncReadPacket).
 trait AsyncWritePacket {
     /// Writes the supplied [`OutboundPacket`] onto this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
+    /// [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#Packet_format
     async fn write_packet<T: OutboundPacket + Send + Sync>(
         &mut self,
         packet: T,
     ) -> Result<(), Error>;
 
-    /// Writes a `VarInt` onto this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
+    /// Writes a `VarInt` onto this object as described in the official [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#VarInt_and_VarLong
     async fn write_varint(&mut self, int: usize) -> Result<(), Error>;
 
-    /// Writes a `String` onto this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
+    /// Writes a `String` onto this object as described in the official [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#Type:String
     async fn write_string(&mut self, string: &str) -> Result<(), Error>;
 }
 
@@ -319,15 +331,19 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
 /// [write implementation](AsyncWritePacket).
 trait AsyncReadPacket {
     /// Reads the supplied [`InboundPacket`] type from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Packet_format).
+    /// [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#Packet_format
     async fn read_packet<T: InboundPacket + Send + Sync>(&mut self) -> Result<T, Error>;
 
-    /// Reads a `VarInt` from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#VarInt_and_VarLong).
+    /// Reads a `VarInt` from this object as described in the official [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#VarInt_and_VarLong
     async fn read_varint(&mut self) -> Result<usize, Error>;
 
-    /// Reads a `String` from this object as described in the official
-    /// [protocol documentation](https://wiki.vg/Protocol#Type:String).
+    /// Reads a `String` from this object as described in the official [protocol documentation][protocol-doc].
+    ///
+    /// [protocol-doc]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Protocol#Type:String
     async fn read_string(&mut self) -> Result<String, Error>;
 }
 
@@ -411,6 +427,7 @@ impl HandshakeInfo {
 /// [`StatusResponse`](StatusResponsePacket) from the server. This response is in JSON and will not be interpreted by
 /// this function. The connection is not consumed by this operation, and the protocol allows for pings to be exchanged
 /// after the status has been returned.
+#[instrument(skip(stream, info), fields(protocol_version = ?info.protocol_version))]
 pub async fn retrieve_status<S>(stream: &mut S, info: &HandshakeInfo) -> Result<String, Error>
 where
     S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
@@ -421,15 +438,22 @@ where
         info.hostname.clone(),
         info.server_port,
     );
+    debug!(packet = debug(&handshake), "sending handshake packet");
     stream.write_packet(handshake).await?;
 
     // create a new status request packet and send it
     let request = StatusRequestPacket::new();
+    debug!(packet = debug(&request), "sending status request packet");
     stream.write_packet(request).await?;
 
     // await the response for the status request and read it
+    debug!("awaiting and reading status response packet");
     let response: StatusResponsePacket = stream.read_packet().await?;
 
+    debug!(
+        packet = debug(&response),
+        "received a status response packet"
+    );
     Ok(response.body)
 }
 
@@ -453,12 +477,15 @@ where
 
     // create and send a new ping packet
     let ping_request = PingPacket::new(payload);
+    debug!(packet = debug(&ping_request), "sending ping packet");
     stream.write_packet(ping_request).await?;
 
     // await the retrieval of the corresponding pong packet
+    debug!("awaiting and reading pong packet");
     let ping_response: PongPacket = stream.read_packet().await?;
 
     // take the time for the response and divide it to get the latency
+    debug!(packet = debug(&ping_response), "received a pong packet");
     let mut duration = start.elapsed();
     duration = duration.div_f32(2.0);
 
