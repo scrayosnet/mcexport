@@ -55,7 +55,7 @@ jobs:
         shared-key: common
 
     - name: Install required cargo crates
-      run: cargo install --locked clippy-sarif sarif-fmt cargo-machete cargo-deny
+      run: cargo install --locked clippy-sarif sarif-fmt cargo-machete cargo-deny cargo-audit
 
     - name: Check formatting
       run: cargo fmt --all -- --check
