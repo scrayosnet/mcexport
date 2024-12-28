@@ -58,9 +58,9 @@ and set it to the required [protocol version number][pvn-docs]. Any number (nega
 will be sent as the desired protocol version to the target. mcexport supports the latest iteration of the
 [Server List Ping protocol][ping-protocol-docs] that all servers since Minecraft 1.7 use.
 
-If no module is specified explicitly, the most recent version at the time of the last release is used instead.
-Therefore, this may not be the latest version at any time, but at least a somewhat recent version. You can override
-the version with the `module` field until a new release is created.
+If no module is specified explicitly, the most recent version at the time of the last release is used instead (if not
+explicitly configured). Therefore, this may not be the latest version at any time, but at least a somewhat recent
+version. You can override the version with the `module` field until a new release is created.
 
 Ideally, we could use (and fall back to) `-1` as the protocol version, as that is recommended to use, when determining
 the appropriate/maximum supported version of a server. However, our practical tests revealed that only very few servers
@@ -165,6 +165,18 @@ spec:
 Depending on your setup, you may also need to add a label, so that the configuration is picked up by your Prometheus
 instance. If you've installed it through the `kube-prometheus-stack` helm chart, it could, for example, be
 `release: kube-prometheus-stack`. You can check the required labels in your Prometheus CRD.
+
+### Configuration Tweaking
+
+To modify the behavior and global values of mcexport, CLI flags and environment variables may be used. To get an
+overview of the available settings and their respective keys, run the following command:
+
+```shell
+mcexport --help
+```
+
+All settings have sensible defaults that are suitable for production deployments of mcexport. Still, tweaking those
+settings can be beneficial for debugging or specific runtime models.
 
 ## Reporting Security Issues
 

@@ -13,14 +13,7 @@ use serde_json::from_str;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
-
-/// The (at the time of the last release) most recent, supported protocol version.
-///
-/// As per the [Server List Ping](https://wiki.vg/Server_List_Ping#Handshake) documentation, it is a convention to use
-/// `-1` to determine the version of the server. It would therefore be ideal to use this value. However, it turned out
-/// that very few servers supported this convention, so we just go with the most recent version, which showed better
-/// results in all cases.
-const LATEST_PROTOCOL_VERSION: isize = 768;
+use tracing::{debug, instrument};
 
 /// The internal error type for all errors related to the network communication.
 ///
@@ -96,17 +89,22 @@ pub struct ProbeStatus {
 
 /// Requests the status of the supplied server and records the ping duration.
 ///
-/// This opens a new [TCP stream][TcpStream] and performs a [Server List Ping](https://wiki.vg/Server_List_Ping)
-/// exchange, including the general handshake, status request, and ping protocol. If any error with the underlying
-/// connection or the communication protocol is encountered, the request is interrupted immediately. The connection is
-/// closed after the ping interaction. If the async interaction is stopped, the connection will also be terminated
-/// prematurely, accounting for Prometheus' timeouts.
+/// This opens a new [TCP stream][TcpStream] and performs a [Server List Ping][server-list-ping] exchange, including the
+/// general handshake, status request, and ping protocol. If any error with the underlying connection or the
+/// communication protocol is encountered, the request is interrupted immediately. The connection is closed after the
+/// ping interaction. If the async interaction is stopped, the connection will also be terminated prematurely,
+/// accounting for Prometheus' timeouts.
+///
+/// [server-list-ping]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Server_List_Ping
+#[instrument(skip(info))]
 pub async fn get_server_status(
     info: &ProbingInfo,
     addr: &SocketAddr,
     srv: bool,
+    fallback_protocol_version: isize,
 ) -> Result<ProbeStatus, Error> {
     // create a new tcp stream to the target
+    debug!("establishing connection to target server");
     let mut stream = TcpStream::connect(addr)
         .await
         .map_err(|_| Error::CannotReach)?;
@@ -116,7 +114,7 @@ pub async fn get_server_status(
         Some(ver) => ver
             .parse()
             .map_err(|_| Error::IllegalProtocol(ver.clone()))?,
-        None => LATEST_PROTOCOL_VERSION,
+        None => fallback_protocol_version,
     };
 
     // retrieve the server status (general information)
@@ -125,11 +123,19 @@ pub async fn get_server_status(
         info.target.hostname.clone(),
         info.target.port,
     );
+    debug!(
+        protocol_version = protocol_version,
+        "requesting server status"
+    );
     let status_string = retrieve_status(&mut stream, &handshake_info).await?;
     let status: ServerStatus =
         from_str(&status_string).map_err(|err| Error::InvalidJson(err, status_string))?;
 
     // perform the server ping to measure duration
+    debug!(
+        protocol_version = protocol_version,
+        "requesting server ping"
+    );
     let ping = execute_ping(&mut stream).await?;
 
     // wrap everything into a ping response
