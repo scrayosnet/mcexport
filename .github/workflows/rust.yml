@@ -53,6 +53,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: common
+        cache-all-crates: 'true'
 
     - name: Install required cargo crates
       run: cargo install --locked clippy-sarif sarif-fmt cargo-machete cargo-deny cargo-audit
@@ -110,6 +111,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: common
+        cache-all-crates: 'true'
 
     - name: Run tests
       run: cargo test --workspace --verbose --all-features
