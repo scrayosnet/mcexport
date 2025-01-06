@@ -17,7 +17,7 @@ rust-version = "1.75.0"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
-axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "tower-log", "tracing", "query"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "tower-log", "tracing", "query"] }
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
