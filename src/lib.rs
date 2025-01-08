@@ -90,53 +90,56 @@ impl IntoResponse for ProbeStatus {
         // return the generated metrics
         generate_metrics_response(1, |registry| {
             // ping duration (gauge)
-            let ping_duration = Family::<(), Gauge<f64, AtomicU64>>::default();
+            let ping_duration = Family::<Vec<(String, String)>, Gauge<f64, AtomicU64>>::default();
             registry.register(
                 "ping_duration_seconds",
                 "The duration that's elapsed since the probe request",
                 ping_duration.clone(),
             );
             ping_duration
-                .get_or_create(&())
+                .get_or_create(&vec![])
                 .set(self.ping.as_secs_f64());
 
             // srv record (Gauge)
-            let address_srv = Family::<(), Gauge>::default();
+            let address_srv = Family::<Vec<(String, String)>, Gauge>::default();
             registry.register(
                 "address_srv_info",
                 "Whether there was an SRV record for the hostname",
                 address_srv.clone(),
             );
-            address_srv.get_or_create(&()).set(i64::from(self.srv));
+            address_srv.get_or_create(&vec![]).set(i64::from(self.srv));
 
             // online players (gauge)
-            let players_online = Family::<(), Gauge<u32, AtomicU32>>::default();
+            let players_online = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_online_total",
                 "The number of players that are currently online",
                 players_online.clone(),
             );
             players_online
-                .get_or_create(&())
+                .get_or_create(&vec![])
                 .set(self.status.players.online);
 
             // max players (gauge)
-            let players_max = Family::<(), Gauge<u32, AtomicU32>>::default();
+            let players_max = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_max_total",
                 "The number of players that can join at maximum",
                 players_max.clone(),
             );
-            players_max.get_or_create(&()).set(self.status.players.max);
+            players_max
+                .get_or_create(&vec![])
+                .set(self.status.players.max);
 
             // sample players (gauge)
-            let players_samples_count = Family::<(), Gauge<u32, AtomicU32>>::default();
+            let players_samples_count =
+                Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "players_samples_total",
                 "The number of sample entries that have been sent",
                 players_samples_count.clone(),
             );
-            players_samples_count.get_or_create(&()).set(
+            players_samples_count.get_or_create(&vec![]).set(
                 self.status
                     .players
                     .sample
@@ -144,36 +147,38 @@ impl IntoResponse for ProbeStatus {
             );
 
             // protocol version (gauge)
-            let protocol_version = Family::<(), Gauge>::default();
+            let protocol_version = Family::<Vec<(String, String)>, Gauge>::default();
             registry.register(
                 "protocol_version_info",
                 "The numeric network protocol version",
                 protocol_version.clone(),
             );
             protocol_version
-                .get_or_create(&())
+                .get_or_create(&vec![])
                 .set(self.status.version.protocol);
 
             // protocol version (gauge)
             let mut hasher = DefaultHasher::new();
             self.status.version.name.hash(&mut hasher);
-            let protocol_hash = Family::<(), Gauge>::default();
+            let protocol_hash = Family::<Vec<(String, String)>, Gauge>::default();
             registry.register(
                 "protocol_version_hash",
                 "The numeric hash of the visual network protocol",
                 protocol_hash.clone(),
             );
-            protocol_hash.get_or_create(&()).set(hasher.finish() as i64);
+            protocol_hash
+                .get_or_create(&vec![])
+                .set(hasher.finish() as i64);
 
             // favicon bytes (gauge)
-            let favicon_bytes = Family::<(), Gauge<u32, AtomicU32>>::default();
+            let favicon_bytes = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
             registry.register(
                 "favicon_bytes",
                 "The size of the favicon in bytes",
                 favicon_bytes.clone(),
             );
             let size: usize = self.status.favicon.map_or(0, |icon| icon.len());
-            favicon_bytes.get_or_create(&()).set(size as u32);
+            favicon_bytes.get_or_create(&vec![]).set(size as u32);
         })
     }
 }
@@ -281,7 +286,7 @@ where
     let mut registry = Registry::with_prefix("mcexport");
 
     // create and register the success metric
-    let success = Family::<(), Gauge>::default();
+    let success = Family::<Vec<(String, String)>, Gauge>::default();
     registry.register(
         "success",
         "Whether the probe operation was successful",
@@ -289,7 +294,7 @@ where
     );
 
     // set the success status of this metric
-    success.get_or_create(&()).set(success_state);
+    success.get_or_create(&vec![]).set(success_state);
 
     // add dynamic, desired metrics
     add_metrics(&mut registry);
