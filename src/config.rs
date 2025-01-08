@@ -39,7 +39,7 @@ pub struct AppState {
     pub timeout_fallback: f64,
     /// The offset of the timeout in fractional seconds that is always subtracted from the value.
     pub timeout_offset: f64,
-    /// .
+    /// The protocol version that should be used as a fallback (if not explicitly defined).
     pub protocol_version: isize,
     /// The resolver that will be used to dynamically resolve all target addresses.
     pub resolver: TokioAsyncResolver,
