@@ -98,26 +98,32 @@ impl TargetAddress {
         let srv_response = resolver.lookup(&srv_name, SRV).await;
 
         // check if any SRV record was present (use this data then)
-        let (hostname, port, srv_used) = if let Ok(response) = srv_response {
-            if let Some(record) = response.iter().find_map(|rec| rec.as_srv()) {
-                let target = record.target().to_utf8();
-                let target_port = record.port();
-                debug!(
-                    "found an SRV record for '{}': {}:{}",
-                    srv_name, target, target_port
-                );
-                (target, target_port, true)
-            } else {
-                debug!(
-                    "found an SRV record for '{}', but it was of an invalid type",
-                    srv_name
-                );
+        let (hostname, port, srv_used) = srv_response.map_or_else(
+            |_| {
+                debug!("found no SRV record for '{}'", srv_name);
                 (self.hostname.clone(), self.port, false)
-            }
-        } else {
-            debug!("found no SRV record for '{}'", srv_name);
-            (self.hostname.clone(), self.port, false)
-        };
+            },
+            |response| {
+                response.iter().find_map(|rec| rec.as_srv()).map_or_else(
+                    || {
+                        debug!(
+                            "found an SRV record for '{}', but it was of an invalid type",
+                            srv_name
+                        );
+                        (self.hostname.clone(), self.port, false)
+                    },
+                    |record| {
+                        let target = record.target().to_utf8();
+                        let target_port = record.port();
+                        debug!(
+                            "found an SRV record for '{}': {}:{}",
+                            srv_name, target, target_port
+                        );
+                        (target, target_port, true)
+                    },
+                )
+            },
+        );
 
         // resolve the underlying ips for the hostname
         let ip_response = resolver.lookup_ip(&hostname).await?;

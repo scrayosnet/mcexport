@@ -84,7 +84,7 @@ trait OutboundPacket: Packet {
 /// `InboundPacket`s are packets that are read and therefore are expected to be of a specific packet ID.
 trait InboundPacket: Packet + Sized {
     /// Creates a new instance of this packet with the data from the buffer.
-    async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error>;
+    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error>;
 }
 
 /// This packet initiates the status request attempt and tells the server the details of the client.
@@ -178,7 +178,7 @@ impl Packet for StatusResponsePacket {
 }
 
 impl InboundPacket for StatusResponsePacket {
-    async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error> {
+    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error> {
         let mut reader = Cursor::new(buffer);
 
         let body = reader.read_string().await?;
@@ -237,7 +237,7 @@ impl Packet for PongPacket {
 }
 
 impl InboundPacket for PongPacket {
-    async fn new_from_buffer(buffer: Vec<u8>) -> Result<Self, Error> {
+    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error> {
         let mut reader = Cursor::new(buffer);
 
         let payload = reader.read_u64().await?;
@@ -370,7 +370,7 @@ impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
         self.read_exact(&mut buffer).await?;
 
         // convert the received buffer into our expected packet
-        T::new_from_buffer(buffer).await
+        T::new_from_buffer(&buffer).await
     }
 
     async fn read_varint(&mut self) -> Result<usize, Error> {
@@ -557,7 +557,7 @@ mod tests {
 
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_string(body).await.unwrap();
-        let packet = StatusResponsePacket::new_from_buffer(buffer.get_ref().clone())
+        let packet = StatusResponsePacket::new_from_buffer(&buffer.get_ref().clone())
             .await
             .unwrap();
         assert_eq!(packet.body, body);
@@ -592,7 +592,7 @@ mod tests {
 
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_u64(payload).await.unwrap();
-        let packet = PongPacket::new_from_buffer(buffer.get_ref().clone())
+        let packet = PongPacket::new_from_buffer(&buffer.get_ref().clone())
             .await
             .unwrap();
         assert_eq!(packet.payload, payload);
