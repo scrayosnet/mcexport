@@ -7,7 +7,7 @@
 
 use crate::probe::ProbingInfo;
 use crate::protocol;
-use crate::protocol::{execute_ping, retrieve_status, HandshakeInfo};
+use crate::protocol::{HandshakeInfo, execute_ping, retrieve_status};
 use serde::Deserialize;
 use serde_json::from_str;
 use std::net::SocketAddr;

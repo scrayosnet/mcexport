@@ -5,11 +5,11 @@
 //! default values and SRV records are considered while resolving the dynamic target address. It is the responsibility
 //! of this module to standardize the desired probing that should be performed for a request.
 
+use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::error::ResolveError;
 use hickory_resolver::proto::rr::RecordType::SRV;
-use hickory_resolver::TokioAsyncResolver;
 use serde::de::{Unexpected, Visitor};
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
@@ -217,7 +217,7 @@ impl<'de> Deserialize<'de> for TargetAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_test::{assert_de_tokens, assert_de_tokens_error, Token};
+    use serde_test::{Token, assert_de_tokens, assert_de_tokens_error};
 
     #[test]
     fn deserialize_without_port() {

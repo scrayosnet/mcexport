@@ -4,8 +4,8 @@
 //! the request headers don't contain the timeout value. An offset is subtracted from the timeout to account for latency
 //! and global processing time, so that the Prometheus timeout never expires before ours.
 
-use axum::http::header::ToStrError;
 use axum::http::HeaderMap;
+use axum::http::header::ToStrError;
 use std::num::ParseFloatError;
 use std::time::Duration;
 use tracing::{debug, trace};

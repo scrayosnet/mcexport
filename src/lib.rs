@@ -25,20 +25,20 @@ mod protocol;
 mod timeout;
 
 use crate::config::AppState;
-use crate::ping::{get_server_status, ProbeStatus};
+use crate::ping::{ProbeStatus, get_server_status};
 use crate::probe::{
     ProbingInfo,
     ResolutionResult::{Plain, Srv},
 };
 use axum::extract::{Query, State};
-use axum::http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{Html, IntoResponse, Response};
-use axum::{body::Body, routing::get, Router};
+use axum::{Router, body::Body, routing::get};
 use prometheus_client::registry::Registry;
 use prometheus_client::{encoding::text::encode, metrics::family::Family, metrics::gauge::Gauge};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::{atomic::AtomicU32, atomic::AtomicU64, Arc};
+use std::sync::{Arc, atomic::AtomicU32, atomic::AtomicU64};
 use tokio::{net::TcpListener, time::timeout};
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument, warn};
