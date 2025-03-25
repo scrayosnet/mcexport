@@ -109,6 +109,15 @@ impl IntoResponse for ProbeStatus {
             );
             address_srv.get_or_create(&vec![]).set(i64::from(self.srv));
 
+            // srv record (Gauge)
+            let address_srv = Family::<Vec<(String, String)>, Gauge>::default();
+            registry.register(
+                "address_ping_info",
+                "Whether the ping response contained the correct payload",
+                address_srv.clone(),
+            );
+            address_srv.get_or_create(&vec![]).set(i64::from(self.valid));
+
             // online players (gauge)
             let players_online = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
             registry.register(

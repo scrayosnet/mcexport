@@ -1,5 +1,5 @@
 use clap::Parser;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::{Resolver, TokioAsyncResolver, TokioResolver};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::level_filters::LevelFilter;
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.timeout_fallback,
         args.timeout_offset,
         args.protocol_version,
-        TokioAsyncResolver::tokio_from_system_conf()?,
+        Resolver::builder_tokio()?.build(),
     ));
 
     // run mcexport blocking

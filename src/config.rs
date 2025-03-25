@@ -5,7 +5,7 @@
 //! back to sensible defaults. The configuration is also used as the immutable state of the application within axum,
 //! so that all tasks can use the supplied values.
 
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::{TokioAsyncResolver, TokioResolver};
 use std::net::SocketAddr;
 
 /// The (at the time of the last release) most recent, supported protocol version.
@@ -42,7 +42,7 @@ pub struct AppState {
     /// The protocol version that should be used as a fallback (if not explicitly defined).
     pub protocol_version: isize,
     /// The resolver that will be used to dynamically resolve all target addresses.
-    pub resolver: TokioAsyncResolver,
+    pub resolver: TokioResolver,
 }
 
 impl AppState {
@@ -53,7 +53,7 @@ impl AppState {
         timeout_fallback: f64,
         timeout_offset: f64,
         protocol_version: isize,
-        resolver: TokioAsyncResolver,
+        resolver: TokioResolver,
     ) -> Self {
         Self {
             address,

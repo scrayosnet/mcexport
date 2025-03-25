@@ -83,6 +83,8 @@ pub struct ProbeStatus {
     pub srv: bool,
     /// The latency to get information from one side to the other (RTT/2).
     pub ping: Duration,
+    /// Whether the ping response was valid (contained the right payload).
+    pub valid: bool,
     /// The self-reported status of the server.
     pub status: ServerStatus,
 }
@@ -136,10 +138,10 @@ pub async fn get_server_status(
         protocol_version = protocol_version,
         "requesting server ping"
     );
-    let ping = execute_ping(&mut stream).await?;
+    let (ping, valid) = execute_ping(&mut stream).await?;
 
     // wrap everything into a ping response
-    Ok(ProbeStatus { srv, ping, status })
+    Ok(ProbeStatus { srv, ping, valid, status })
 }
 
 #[cfg(test)]

@@ -41,14 +41,6 @@ pub enum Error {
     /// The JSON response of the status packet is incorrectly encoded (not UTF-8).
     #[error("invalid ServerListPing response body (invalid encoding)")]
     InvalidEncoding,
-    /// An error occurred with the payload of a ping.
-    #[error("mismatched payload value: {actual} (expected {expected})")]
-    PayloadMismatch {
-        /// The expected value that should be present.
-        expected: u64,
-        /// The actual value that was observed.
-        actual: u64,
-    },
     /// The current time is before the unix epoch: should not happen.
     #[error("unix epoch could not be calculated: {0}")]
     TimeUnavailable(#[from] SystemTimeError),
@@ -77,14 +69,18 @@ trait Packet {
 
 /// `OutboundPacket`s are packets that are written and therefore have a fixed, specific packet ID.
 trait OutboundPacket: Packet {
-    /// Creates a new buffer with the data from this packet.
-    async fn to_buffer(&self) -> Result<Vec<u8>, Error>;
+    /// Writes the data from this packet into the supplied [`S`].
+    async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
+    where
+        S: AsyncWrite + Unpin + Send + Sync;
 }
 
 /// `InboundPacket`s are packets that are read and therefore are expected to be of a specific packet ID.
 trait InboundPacket: Packet + Sized {
     /// Creates a new instance of this packet with the data from the buffer.
-    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error>;
+    async fn new_from_buffer<S>(buffer: &mut S) -> Result<Self, Error>
+    where
+        S: AsyncRead + Unpin + Send + Sync;
 }
 
 /// This packet initiates the status request attempt and tells the server the details of the client.
@@ -122,16 +118,17 @@ impl Packet for HandshakePacket {
 }
 
 impl OutboundPacket for HandshakePacket {
-    async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
-        let mut buffer = Cursor::new(Vec::<u8>::new());
-
+    async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
+    where
+        S: AsyncWrite + Unpin + Send + Sync,
+    {
         #[allow(clippy::cast_sign_loss)]
         buffer.write_varint(self.protocol_version as usize).await?;
         buffer.write_string(&self.server_address).await?;
         buffer.write_u16(self.server_port).await?;
         buffer.write_varint(self.next_state.into()).await?;
 
-        Ok(buffer.into_inner())
+        Ok(())
     }
 }
 
@@ -156,8 +153,11 @@ impl Packet for StatusRequestPacket {
 }
 
 impl OutboundPacket for StatusRequestPacket {
-    async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
-        Ok(Vec::new())
+    async fn write_to_buffer<S>(&self, _buffer: &mut S) -> Result<(), Error>
+    where
+        S: AsyncWrite + Unpin + Send + Sync,
+    {
+        Ok(())
     }
 }
 
@@ -178,10 +178,11 @@ impl Packet for StatusResponsePacket {
 }
 
 impl InboundPacket for StatusResponsePacket {
-    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error> {
-        let mut reader = Cursor::new(buffer);
-
-        let body = reader.read_string().await?;
+    async fn new_from_buffer<S>(buffer: &mut S) -> Result<Self, Error>
+    where
+        S: AsyncRead + Unpin + Send + Sync,
+    {
+        let body = buffer.read_string().await?;
 
         Ok(Self { body })
     }
@@ -211,12 +212,13 @@ impl Packet for PingPacket {
 }
 
 impl OutboundPacket for PingPacket {
-    async fn to_buffer(&self) -> Result<Vec<u8>, Error> {
-        let mut buffer = Cursor::new(Vec::<u8>::new());
-
+    async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
+    where
+        S: AsyncWrite + Unpin + Send + Sync,
+    {
         buffer.write_u64(self.payload).await?;
 
-        Ok(buffer.into_inner())
+        Ok(())
     }
 }
 
@@ -237,10 +239,11 @@ impl Packet for PongPacket {
 }
 
 impl InboundPacket for PongPacket {
-    async fn new_from_buffer(buffer: &[u8]) -> Result<Self, Error> {
-        let mut reader = Cursor::new(buffer);
-
-        let payload = reader.read_u64().await?;
+    async fn new_from_buffer<S>(buffer: &mut S) -> Result<Self, Error>
+    where
+        S: AsyncRead + Unpin + Send + Sync,
+    {
+        let payload = buffer.read_u64().await?;
 
         Ok(Self { payload })
     }
@@ -277,14 +280,10 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
         &mut self,
         packet: T,
     ) -> Result<(), Error> {
-        // write the packet into a buffer and box it as a slice (sized)
-        let packet_buffer = packet.to_buffer().await?;
-        let raw_packet = packet_buffer.into_boxed_slice();
-
         // create a new buffer and write the packet onto it (to get the size)
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_varint(T::get_packet_id()).await?;
-        buffer.write_all(&raw_packet).await?;
+        packet.write_to_buffer(&mut buffer).await?;
 
         // write the length of the content (length frame encoder) and then the packet
         let inner = buffer.into_inner();
@@ -366,11 +365,10 @@ impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
         }
 
         // read the remaining content of the packet into a new buffer
-        let mut buffer = vec![0; length - 1];
-        self.read_exact(&mut buffer).await?;
+        let mut buffer = self.take(length as u64);
 
         // convert the received buffer into our expected packet
-        T::new_from_buffer(&buffer).await
+        T::new_from_buffer(&mut buffer).await
     }
 
     async fn read_varint(&mut self) -> Result<usize, Error> {
@@ -449,6 +447,7 @@ where
     // await the response for the status request and read it
     debug!("awaiting and reading status response packet");
     let response: StatusResponsePacket = stream.read_packet().await?;
+    debug!(packet = debug(&response), "received status response packet");
 
     debug!(
         packet = debug(&response),
@@ -462,7 +461,7 @@ where
 /// This sends the [Ping][PingPacket] and awaits the response of the [Pong][PongPacket], while recording the time it
 /// takes to get a response. From this recorded RTT (Round-Trip-Time) the latency is calculated by dividing this value
 /// by two. This is the most accurate way to measure the ping we can use.
-pub async fn execute_ping<S>(stream: &mut S) -> Result<Duration, Error>
+pub async fn execute_ping<S>(stream: &mut S) -> Result<(Duration, bool), Error>
 where
     S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
 {
@@ -483,21 +482,18 @@ where
     // await the retrieval of the corresponding pong packet
     debug!("awaiting and reading pong packet");
     let ping_response: PongPacket = stream.read_packet().await?;
+    debug!(packet = debug(&ping_response), "received pong packet");
 
     // take the time for the response and divide it to get the latency
-    debug!(packet = debug(&ping_response), "received a pong packet");
     let mut duration = start.elapsed();
     duration = duration.div_f32(2.0);
 
     // if the pong packet did not match, something unexpected happened with the server
     if ping_response.payload != payload {
-        return Err(Error::PayloadMismatch {
-            expected: payload,
-            actual: ping_response.payload,
-        });
+        return Ok((duration, false))
     }
 
-    Ok(duration)
+    Ok((duration, true))
 }
 
 #[cfg(test)]
@@ -516,8 +512,9 @@ mod tests {
     #[tokio::test]
     async fn serialize_handshake() {
         let packet = HandshakePacket::new(13, "test".to_string(), 5);
-        let packet_buffer = packet.to_buffer().await.unwrap();
-        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+        let mut packet_buffer = Cursor::new(Vec::<u8>::new());
+        packet.write_to_buffer(&mut packet_buffer).await.unwrap();
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer.into_inner());
 
         let version = buffer.read_varint().await.unwrap();
         assert_eq!(version as isize, packet.protocol_version);
@@ -541,8 +538,9 @@ mod tests {
     #[tokio::test]
     async fn serialize_status_request() {
         let packet = StatusRequestPacket::new();
-        let packet_buffer = packet.to_buffer().await.unwrap();
-        let buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+        let mut packet_buffer = Cursor::new(Vec::<u8>::new());
+        packet.write_to_buffer(&mut packet_buffer).await.unwrap();
+        let buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer.into_inner());
 
         assert_eq!(
             buffer.position() as usize,
@@ -557,14 +555,15 @@ mod tests {
 
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_string(body).await.unwrap();
-        let packet = StatusResponsePacket::new_from_buffer(&buffer.get_ref().clone())
+        let mut read_buffer = Cursor::new(buffer.into_inner());
+        let packet = StatusResponsePacket::new_from_buffer(&mut read_buffer)
             .await
             .unwrap();
         assert_eq!(packet.body, body);
 
         assert_eq!(
-            buffer.position() as usize,
-            buffer.get_ref().len(),
+            read_buffer.position() as usize,
+            read_buffer.get_ref().len(),
             "There are remaining bytes in the buffer"
         );
     }
@@ -573,8 +572,9 @@ mod tests {
     async fn serialize_ping() {
         // write the packet into a buffer and box it as a slice (sized)
         let packet = PingPacket::new(17);
-        let packet_buffer = packet.to_buffer().await.unwrap();
-        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer);
+        let mut packet_buffer = Cursor::new(Vec::<u8>::new());
+        packet.write_to_buffer(&mut packet_buffer).await.unwrap();
+        let mut buffer: Cursor<Vec<u8>> = Cursor::new(packet_buffer.into_inner());
 
         let payload = buffer.read_u64().await.unwrap();
         assert_eq!(payload, packet.payload);
@@ -592,14 +592,15 @@ mod tests {
 
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_u64(payload).await.unwrap();
-        let packet = PongPacket::new_from_buffer(&buffer.get_ref().clone())
+        let mut read_buffer = Cursor::new(buffer.into_inner());
+        let packet = PongPacket::new_from_buffer(&mut read_buffer)
             .await
             .unwrap();
         assert_eq!(packet.payload, payload);
 
         assert_eq!(
-            buffer.position() as usize,
-            buffer.get_ref().len(),
+            read_buffer.position() as usize,
+            read_buffer.get_ref().len(),
             "There are remaining bytes in the buffer"
         );
     }

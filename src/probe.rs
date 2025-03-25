@@ -5,11 +5,10 @@
 //! default values and SRV records are considered while resolving the dynamic target address. It is the responsibility
 //! of this module to standardize the desired probing that should be performed for a request.
 
-use hickory_resolver::TokioAsyncResolver;
-use hickory_resolver::error::ResolveError;
 use hickory_resolver::proto::rr::RecordType::SRV;
+use hickory_resolver::{ResolveError, TokioResolver};
 use serde::de::{Unexpected, Visitor};
-use serde::{Deserialize, Deserializer, de};
+use serde::{de, Deserialize, Deserializer};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
@@ -90,7 +89,7 @@ impl TargetAddress {
     /// information. If any SRV record was found, the second return of this function will be true.
     pub async fn to_socket_addrs(
         &self,
-        resolver: &TokioAsyncResolver,
+        resolver: &TokioResolver,
     ) -> Result<ResolutionResult, Error> {
         // assemble the SRV record name
         let srv_name = format!("_minecraft._tcp.{}", self.hostname);
@@ -217,7 +216,8 @@ impl<'de> Deserialize<'de> for TargetAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_test::{Token, assert_de_tokens, assert_de_tokens_error};
+    use hickory_resolver::Resolver;
+    use serde_test::{assert_de_tokens, assert_de_tokens_error, Token};
 
     #[test]
     fn deserialize_without_port() {
@@ -317,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_address_with_srv() {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+        let resolver = Resolver::builder_tokio().unwrap().build();
         let probe_address = TargetAddress {
             hostname: "justchunks.net".to_string(),
             port: 1337,
@@ -330,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_address_without_srv() {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+        let resolver = Resolver::builder_tokio().unwrap().build();
         let probe_address = TargetAddress {
             hostname: "mc.justchunks.net".to_string(),
             port: 25566,
@@ -343,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_ip_address() {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+        let resolver = Resolver::builder_tokio().unwrap().build();
         let probe_address = TargetAddress {
             hostname: "142.132.245.251".to_string(),
             port: 25566,
@@ -357,7 +357,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn fail_resolve_illegal_address() {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+        let resolver = Resolver::builder_tokio().unwrap().build();
         let probe_address = TargetAddress {
             hostname: "illegal_address".to_string(),
             port: 25566,
@@ -368,7 +368,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn fail_resolve_illegal_ip_address() {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
+        let resolver = Resolver::builder_tokio().unwrap().build();
         let probe_address = TargetAddress {
             hostname: "500.132.245.251".to_string(),
             port: 25566,
