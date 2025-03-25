@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 /// supported this convention, so we just go with the most recent version, which showed better results in all cases.
 ///
 /// [server-list-ping]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Server_List_Ping#Handshake
-pub const LATEST_PROTOCOL_VERSION: isize = 769;
+pub const LATEST_PROTOCOL_VERSION: isize = 770;
 
 /// The default socket address touple and port that mcexport should listen on.
 pub const DEFAULT_ADDRESS: ([u8; 4], u16) = ([0, 0, 0, 0], 10026);
