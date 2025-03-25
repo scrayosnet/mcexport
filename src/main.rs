@@ -1,5 +1,5 @@
 use clap::Parser;
-use hickory_resolver::{Resolver, TokioAsyncResolver, TokioResolver};
+use hickory_resolver::Resolver;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::level_filters::LevelFilter;

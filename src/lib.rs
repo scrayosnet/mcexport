@@ -116,7 +116,9 @@ impl IntoResponse for ProbeStatus {
                 "Whether the ping response contained the correct payload",
                 address_srv.clone(),
             );
-            address_srv.get_or_create(&vec![]).set(i64::from(self.valid));
+            address_srv
+                .get_or_create(&vec![])
+                .set(i64::from(self.valid));
 
             // online players (gauge)
             let players_online = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();

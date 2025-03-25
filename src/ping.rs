@@ -141,7 +141,12 @@ pub async fn get_server_status(
     let (ping, valid) = execute_ping(&mut stream).await?;
 
     // wrap everything into a ping response
-    Ok(ProbeStatus { srv, ping, valid, status })
+    Ok(ProbeStatus {
+        srv,
+        ping,
+        valid,
+        status,
+    })
 }
 
 #[cfg(test)]

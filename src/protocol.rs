@@ -490,7 +490,7 @@ where
 
     // if the pong packet did not match, something unexpected happened with the server
     if ping_response.payload != payload {
-        return Ok((duration, false))
+        return Ok((duration, false));
     }
 
     Ok((duration, true))
@@ -593,9 +593,7 @@ mod tests {
         let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         buffer.write_u64(payload).await.unwrap();
         let mut read_buffer = Cursor::new(buffer.into_inner());
-        let packet = PongPacket::new_from_buffer(&mut read_buffer)
-            .await
-            .unwrap();
+        let packet = PongPacket::new_from_buffer(&mut read_buffer).await.unwrap();
         assert_eq!(packet.payload, payload);
 
         assert_eq!(

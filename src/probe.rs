@@ -8,7 +8,7 @@
 use hickory_resolver::proto::rr::RecordType::SRV;
 use hickory_resolver::{ResolveError, TokioResolver};
 use serde::de::{Unexpected, Visitor};
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
@@ -93,31 +93,27 @@ impl TargetAddress {
     ) -> Result<ResolutionResult, Error> {
         // assemble the SRV record name
         let srv_name = format!("_minecraft._tcp.{}", self.hostname);
-        debug!("trying to resolve SRV record: '{}'", srv_name);
+        debug!("trying to resolve SRV record: '{srv_name}'");
         let srv_response = resolver.lookup(&srv_name, SRV).await;
 
         // check if any SRV record was present (use this data then)
         let (hostname, port, srv_used) = srv_response.map_or_else(
             |_| {
-                debug!("found no SRV record for '{}'", srv_name);
+                debug!("found no SRV record for '{srv_name}'");
                 (self.hostname.clone(), self.port, false)
             },
             |response| {
                 response.iter().find_map(|rec| rec.as_srv()).map_or_else(
                     || {
                         debug!(
-                            "found an SRV record for '{}', but it was of an invalid type",
-                            srv_name
+                            "found an SRV record for '{srv_name}', but it was of an invalid type"
                         );
                         (self.hostname.clone(), self.port, false)
                     },
                     |record| {
                         let target = record.target().to_utf8();
                         let target_port = record.port();
-                        debug!(
-                            "found an SRV record for '{}': {}:{}",
-                            srv_name, target, target_port
-                        );
+                        debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
                         (target, target_port, true)
                     },
                 )
@@ -217,7 +213,7 @@ impl<'de> Deserialize<'de> for TargetAddress {
 mod tests {
     use super::*;
     use hickory_resolver::Resolver;
-    use serde_test::{assert_de_tokens, assert_de_tokens_error, Token};
+    use serde_test::{Token, assert_de_tokens, assert_de_tokens_error};
 
     #[test]
     fn deserialize_without_port() {
