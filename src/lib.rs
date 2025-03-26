@@ -112,7 +112,7 @@ impl IntoResponse for ProbeStatus {
             // srv record (Gauge)
             let address_srv = Family::<Vec<(String, String)>, Gauge>::default();
             registry.register(
-                "address_ping_info",
+                "address_ping_valid_info",
                 "Whether the ping response contained the correct payload",
                 address_srv.clone(),
             );

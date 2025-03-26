@@ -7,7 +7,6 @@
 //!
 //! [server-list-ping]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Server_List_Ping
 
-use std::io::Cursor;
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -46,21 +45,6 @@ pub enum Error {
     TimeUnavailable(#[from] SystemTimeError),
 }
 
-/// State is the desired state that the connection should be in after the initial handshake.
-#[derive(Clone, Copy, Debug)]
-enum State {
-    /// The status state that is used to query server information without connecting.
-    Status,
-}
-
-impl From<State> for usize {
-    fn from(state: State) -> Self {
-        match state {
-            State::Status => 1,
-        }
-    }
-}
-
 /// Packets are network packets that are part of the protocol definition and identified by a context and ID.
 trait Packet {
     /// Returns the defined ID of this network packet.
@@ -95,8 +79,6 @@ struct HandshakePacket {
     server_address: String,
     /// The pretended server port.
     server_port: u16,
-    /// The protocol state to initiate.
-    next_state: State,
 }
 
 impl HandshakePacket {
@@ -106,7 +88,6 @@ impl HandshakePacket {
             protocol_version,
             server_address,
             server_port,
-            next_state: State::Status,
         }
     }
 }
@@ -126,7 +107,8 @@ impl OutboundPacket for HandshakePacket {
         buffer.write_varint(self.protocol_version as usize).await?;
         buffer.write_string(&self.server_address).await?;
         buffer.write_u16(self.server_port).await?;
-        buffer.write_varint(self.next_state.into()).await?;
+        // next_state: status
+        buffer.write_varint(1usize).await?;
 
         Ok(())
     }
@@ -280,15 +262,21 @@ impl<W: AsyncWrite + Unpin + Send + Sync> AsyncWritePacket for W {
         &mut self,
         packet: T,
     ) -> Result<(), Error> {
-        // create a new buffer and write the packet onto it (to get the size)
-        let mut buffer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // create a new buffer (our packets are very small)
+        let mut buffer = Vec::with_capacity(48);
+
+        // write the packet id and the respective packet content
         buffer.write_varint(T::get_packet_id()).await?;
         packet.write_to_buffer(&mut buffer).await?;
 
-        // write the length of the content (length frame encoder) and then the packet
-        let inner = buffer.into_inner();
-        self.write_varint(inner.len()).await?;
-        self.write_all(&inner).await?;
+        // prepare a final buffer (leaving max 2 bytes for varint (packets never get that big))
+        let packet_len = buffer.len();
+        let mut final_buffer = Vec::with_capacity(packet_len + 2);
+        final_buffer.write_varint(packet_len).await?;
+        final_buffer.extend_from_slice(&buffer);
+
+        // send the final buffer into the stream
+        self.write_all(&final_buffer).await?;
 
         Ok(())
     }
@@ -499,6 +487,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[tokio::test]
     async fn packet_ids_valid() {
@@ -526,7 +515,7 @@ mod tests {
         assert_eq!(server_port, packet.server_port);
 
         let state = buffer.read_varint().await.unwrap();
-        assert_eq!(state, usize::from(packet.next_state));
+        assert_eq!(state, 1usize);
 
         assert_eq!(
             buffer.position() as usize,
@@ -642,6 +631,15 @@ mod tests {
             buffer.get_ref().len(),
             "There are remaining bytes in the buffer"
         );
+    }
+
+    #[tokio::test]
+    async fn write_varint_special() {
+        let mut writer: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        writer.write_varint(1usize).await.unwrap();
+        let data = writer.into_inner();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0], 0x01);
     }
 
     #[tokio::test]
