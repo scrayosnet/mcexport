@@ -7,6 +7,7 @@
 //!
 //! [server-list-ping]: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Server_List_Ping
 
+use std::io::Cursor;
 use std::time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -342,8 +343,13 @@ impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
             return Err(Error::IllegalPacketLength);
         }
 
+        // read the remaining content of the packet into a new buffer
+        let mut buf = vec![0; length];
+        self.read_exact(&mut buf).await?;
+        let mut buffer = Cursor::new(buf);
+
         // extract the encoded packet id and validate if it is expected
-        let packet_id = self.read_varint().await?;
+        let packet_id = buffer.read_varint().await?;
         let expected_packet_id = T::get_packet_id();
         if packet_id != expected_packet_id {
             return Err(Error::IllegalPacketId {
@@ -351,9 +357,6 @@ impl<R: AsyncRead + Unpin + Send + Sync> AsyncReadPacket for R {
                 actual: packet_id,
             });
         }
-
-        // read the remaining content of the packet into a new buffer
-        let mut buffer = self.take(length as u64);
 
         // convert the received buffer into our expected packet
         T::new_from_buffer(&mut buffer).await
