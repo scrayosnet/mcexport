@@ -103,8 +103,19 @@ docker run --rm \
 
 #### Using Kubernetes
 
-There's currently no public [Helm Chart][helm-chart-docs] for mcexport. We're open for contributions! In the meantime,
-you can create your own deployment using [Kustomize][kustomize-docs] or any other tooling of your choice.
+To deploy mcexport on Kubernetes using Helm, you can use our official Helm chart from GitHub Container Registry:
+
+```shell
+helm install mcexport oci://ghcr.io/scrayosnet/mcexport --version 1.0.0
+```
+
+You can customize the deployment by providing your own values:
+
+```shell
+helm install mcexport oci://ghcr.io/scrayosnet/mcexport --version 1.0.0 -f values.yaml
+```
+
+Alternatively, you can create your own deployment using [Kustomize][kustomize-docs] or any other tooling of your choice.
 
 ### Check Setup
 
