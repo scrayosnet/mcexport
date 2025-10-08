@@ -514,7 +514,7 @@ data:
               "editorMode": "code",
               "expr": "sum(mcexport_players_online_total{instance=~\"$server\"}) by (instance)",
               "instant": false,
-              "legendFormat": "{{server_name}}",
+              "legendFormat": "{{ `{{server_name}}` }}",
               "range": true,
               "refId": "A"
             }
