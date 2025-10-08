@@ -30,4 +30,4 @@ jobs:
       - name: Push Helm chart to GHCR
         run: |
           CHART_VERSION=$(grep '^version:' mcexport/Chart.yaml | awk '{print $2}')
-          helm push mcexport-${CHART_VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}
+          helm push mcexport-${CHART_VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/helm

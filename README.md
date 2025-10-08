@@ -106,13 +106,13 @@ docker run --rm \
 To deploy mcexport on Kubernetes using Helm, you can use our official Helm chart from GitHub Container Registry:
 
 ```shell
-helm install mcexport oci://ghcr.io/scrayosnet/mcexport --version 1.0.0
+helm install mcexport oci://ghcr.io/scrayosnet/helm/mcexport --version 1.0.0
 ```
 
 You can customize the deployment by providing your own values:
 
 ```shell
-helm install mcexport oci://ghcr.io/scrayosnet/mcexport --version 1.0.0 -f values.yaml
+helm install mcexport oci://ghcr.io/scrayosnet/helm/mcexport --version 1.0.0 -f values.yaml
 ```
 
 Alternatively, you can create your own deployment using [Kustomize][kustomize-docs] or any other tooling of your choice.
