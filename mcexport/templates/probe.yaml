@@ -1,0 +1,23 @@
+{{- if .Values.probe.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ include "mcexport.fullname" . }}
+  labels:
+    {{- include "mcexport.labels" . | nindent 4 }}
+    {{- with .Values.probe.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  prober:
+    url: '{{ tpl .Values.probe.prober.url . }}'
+  interval: {{ .Values.probe.interval }}
+  scrapeTimeout: {{ .Values.probe.scrapeTimeout }}
+  targets:
+    staticConfig:
+      static:
+        {{- $targets := .Values.probe.targets }}
+        {{- range $t := $targets }}
+        - '{{ $t }}'
+        {{- end }}
+{{- end }}
