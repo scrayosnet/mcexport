@@ -19,9 +19,9 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
-pub mod protocol;
 mod ping;
 mod probe;
+pub mod protocol;
 mod timeout;
 
 use crate::config::AppState;

@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use mcexport::protocol::{retrieve_status, HandshakeInfo};
-use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+use criterion::{Criterion, criterion_group, criterion_main};
+use mcexport::protocol::{HandshakeInfo, retrieve_status};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
 // build a simple JSON status body of a typical small size
 fn sample_status_json() -> String {
@@ -17,7 +17,9 @@ fn write_varint(mut val: usize, out: &mut Vec<u8>) {
             temp |= 0b1000_0000;
         }
         out.push(temp);
-        if val == 0 { break; }
+        if val == 0 {
+            break;
+        }
     }
 }
 
@@ -37,7 +39,9 @@ async fn bench_roundtrip_once() {
             let val = b[0] & 0b0111_1111;
             len |= (val as usize) << (7 * num_read);
             num_read += 1;
-            if (b[0] & 0b1000_0000) == 0 { break; }
+            if (b[0] & 0b1000_0000) == 0 {
+                break;
+            }
         }
         // read remaining bytes of handshake packet
         let mut buf = vec![0u8; len];
@@ -52,7 +56,9 @@ async fn bench_roundtrip_once() {
             let val = b[0] & 0b0111_1111;
             len2 |= (val as usize) << (7 * num_read2);
             num_read2 += 1;
-            if (b[0] & 0b1000_0000) == 0 { break; }
+            if (b[0] & 0b1000_0000) == 0 {
+                break;
+            }
         }
         let mut buf2 = vec![0u8; len2];
         server_end.read_exact(&mut buf2).await.unwrap();
