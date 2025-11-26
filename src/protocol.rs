@@ -401,6 +401,7 @@ pub struct HandshakeInfo {
 
 impl HandshakeInfo {
     /// Creates a new [`HandshakeInfo`] with the supplied values for the server handshake.
+    #[must_use]
     pub const fn new(protocol_version: isize, server_address: String, server_port: u16) -> Self {
         Self {
             protocol_version,
@@ -416,6 +417,11 @@ impl HandshakeInfo {
 /// [`StatusResponse`](StatusResponsePacket) from the server. This response is in JSON and will not be interpreted by
 /// this function. The connection is not consumed by this operation, and the protocol allows for pings to be exchanged
 /// after the status has been returned.
+///
+/// # Errors
+///
+/// Will return an appropriate error if the communication with the server fails unexpectedly. This means that mandatory
+/// packets can either not be written or read from the stream.
 #[instrument(skip(stream, info), fields(protocol_version = ?info.protocol_version))]
 pub async fn retrieve_status<S>(stream: &mut S, info: &HandshakeInfo) -> Result<String, Error>
 where
@@ -452,6 +458,11 @@ where
 /// This sends the [Ping][PingPacket] and awaits the response of the [Pong][PongPacket], while recording the time it
 /// takes to get a response. From this recorded RTT (Round-Trip-Time) the latency is calculated by dividing this value
 /// by two. This is the most accurate way to measure the ping we can use.
+///
+/// # Errors
+///
+/// Will return an appropriate error if the communication with the server fails unexpectedly. This means that mandatory
+/// packets can either not be written or read from the stream.
 pub async fn execute_ping<S>(stream: &mut S) -> Result<(Duration, bool), Error>
 where
     S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
