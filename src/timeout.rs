@@ -46,7 +46,7 @@ pub enum Error {
 /// the duration in seconds and will be allowed for the request. Should no such header exist, the supplied default is
 /// used instead. The duration is then reduced by the supplied offset to account for the network latency and processing
 /// overhead that does not count into the timeout. This method never returns a negative duration and instead returns a
-/// [`NegativeDuration`] error with the resulting values.
+/// [`Error::NegativeDuration`] error with the resulting values.
 pub fn get_duration(headers: &HeaderMap, default: f64, offset: f64) -> Result<Duration, Error> {
     // try to use the header value to parse the duration
     trace!("trying to find scrape timeout header");

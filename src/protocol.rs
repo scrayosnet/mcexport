@@ -54,7 +54,7 @@ trait Packet {
 
 /// `OutboundPacket`s are packets that are written and therefore have a fixed, specific packet ID.
 trait OutboundPacket: Packet {
-    /// Writes the data from this packet into the supplied [`S`].
+    /// Writes the data from this packet into the supplied buffer.
     async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
     where
         S: AsyncWrite + Unpin + Send + Sync;
