@@ -1,7 +1,7 @@
 [package]
 name = "mcexport"
 description = "Minecraft Server Prometheus Probe Exporter"
-version = "1.0.1"
+version = "1.0.2"
 authors = [
     "Joshua Dean Küpper <admin@joshua-kuepper.de>"
 ]
@@ -13,7 +13,7 @@ homepage = "https://github.com/scrayosnet/mcexport"
 keywords = ["minecraft", "prometheus", "monitoring", "exporter", "ping"]
 categories = ["development-tools", "command-line-utilities"]
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
@@ -30,7 +30,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 
 [dev-dependencies]
 serde_test = "1"
-criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support", "async_tokio"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support", "async_tokio"] }
 
 [[bench]]
 name = "protocol_bench"

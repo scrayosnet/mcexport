@@ -1,4 +1,4 @@
-FROM rust:alpine@sha256:1de786239f8a4d44f9079ea99339e931f02f3009f80848b72cf52ab47b821008 AS builder
+FROM rust:alpine@sha256:69d7b9d9aeaf108a1419d9a7fcf7860dcc043e9dbd1ab7ce88e44228774d99e9 AS builder
 
 # specify our build directory
 WORKDIR /usr/src/mcexport
