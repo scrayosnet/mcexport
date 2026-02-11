@@ -319,7 +319,7 @@ mod tests {
             port: 1337,
         };
         let resolution_result = probe_address.to_socket_addrs(&resolver).await.unwrap();
-        let expected_address = SocketAddr::from(([142, 132, 245, 251], 25565));
+        let expected_address = SocketAddr::from(([91, 98, 218, 177], 25565));
 
         assert_eq!(resolution_result, ResolutionResult::Srv(expected_address));
     }
@@ -332,7 +332,7 @@ mod tests {
             port: 25566,
         };
         let resolution_result = probe_address.to_socket_addrs(&resolver).await.unwrap();
-        let expected_address = SocketAddr::from(([142, 132, 245, 251], 25566));
+        let expected_address = SocketAddr::from(([91, 98, 218, 177], 25566));
 
         assert_eq!(resolution_result, ResolutionResult::Plain(expected_address));
     }
