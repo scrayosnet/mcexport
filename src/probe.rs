@@ -5,14 +5,15 @@
 //! default values and SRV records are considered while resolving the dynamic target address. It is the responsibility
 //! of this module to standardize the desired probing that should be performed for a request.
 
-use hickory_resolver::proto::rr::RecordType::SRV;
-use hickory_resolver::{ResolveError, TokioResolver};
+use hickory_resolver::net::NetError;
+use hickory_resolver::TokioResolver;
+use hickory_resolver::proto::rr::RData;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, de};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
-use tracing::log::debug;
+use tracing::debug;
 
 /// The internal error type for all [`ProbingInfo`] related errors.
 ///
@@ -23,9 +24,9 @@ use tracing::log::debug;
 pub enum Error {
     /// The resolution failed because there was a communication error with the responsible DNS name server.
     #[error("failed to resolve a DNS record: {0}")]
-    ResolutionFail(#[from] ResolveError),
-    /// The resolution failed because no valid A record was specified for the supplied (or configured) hostname.
-    #[error("could not resolve any \"A\" DNS entries for hostname \"{0}\"")]
+    ResolutionFail(#[from] NetError),
+    /// The resolution failed because no valid DNS record was specified for the supplied (or configured) hostname.
+    #[error("could not resolve any IP DNS entries for hostname \"{0}\"")]
     CouldNotResolveIp(String),
 }
 
@@ -40,9 +41,9 @@ pub enum Error {
 /// [srv]: ResolutionResult::Srv
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResolutionResult {
-    /// There was an SRV record and the resolved IP address is of the target hostname within this record.
+    /// There was an SRV record, and the resolved IP address is of the target hostname within this record.
     Srv(SocketAddr),
-    /// There was no SRV record and the resolved IP address is of the original hostname.
+    /// There was no SRV record, and the resolved IP address is of the original hostname.
     Plain(SocketAddr),
 }
 
@@ -94,7 +95,7 @@ impl TargetAddress {
         // assemble the SRV record name
         let srv_name = format!("_minecraft._tcp.{}", self.hostname);
         debug!("trying to resolve SRV record: '{srv_name}'");
-        let srv_response = resolver.lookup(&srv_name, SRV).await;
+        let srv_response = resolver.srv_lookup(&srv_name).await;
 
         // check if any SRV record was present (use this data then)
         let (hostname, port, srv_used) = srv_response.map_or_else(
@@ -103,26 +104,30 @@ impl TargetAddress {
                 (self.hostname.clone(), self.port, false)
             },
             |response| {
-                response.iter().find_map(|rec| rec.as_srv()).map_or_else(
-                    || {
-                        debug!(
-                            "found an SRV record for '{srv_name}', but it was of an invalid type"
-                        );
-                        (self.hostname.clone(), self.port, false)
-                    },
-                    |record| {
-                        let target = record.target().to_utf8();
-                        let target_port = record.port();
-                        debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
-                        (target, target_port, true)
-                    },
-                )
+                response.answers().iter().find_map(|rec| match &rec.data {
+                        RData::SRV(srv) => Some(srv),
+                        _ => None,
+                    })
+                    .map_or_else(
+                        || {
+                            debug!(
+                                "found an SRV record for '{srv_name}', but it was of an invalid type"
+                            );
+                            (self.hostname.clone(), self.port, false)
+                        },
+                        |record| {
+                            let target = record.target.to_utf8();
+                            let target_port = record.port;
+                            debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
+                            (target, target_port, true)
+                        },
+                    )
             },
         );
 
         // resolve the underlying ips for the hostname
         let ip_response = resolver.lookup_ip(&hostname).await?;
-        for ip in ip_response {
+        for ip in ip_response.iter() {
             debug!("resolved ip address {} for hostname {}", ip, &hostname);
             if ip.is_ipv4() {
                 return if srv_used {
@@ -313,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_address_with_srv() {
-        let resolver = Resolver::builder_tokio().unwrap().build();
+        let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
         let probe_address = TargetAddress {
             hostname: "justchunks.net".to_string(),
             port: 1337,
@@ -326,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_address_without_srv() {
-        let resolver = Resolver::builder_tokio().unwrap().build();
+        let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
         let probe_address = TargetAddress {
             hostname: "mc.justchunks.net".to_string(),
             port: 25566,
@@ -339,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_real_ip_address() {
-        let resolver = Resolver::builder_tokio().unwrap().build();
+        let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
         let probe_address = TargetAddress {
             hostname: "142.132.245.251".to_string(),
             port: 25566,
@@ -353,7 +358,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn fail_resolve_illegal_address() {
-        let resolver = Resolver::builder_tokio().unwrap().build();
+        let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
         let probe_address = TargetAddress {
             hostname: "illegal_address".to_string(),
             port: 25566,
@@ -364,7 +369,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn fail_resolve_illegal_ip_address() {
-        let resolver = Resolver::builder_tokio().unwrap().build();
+        let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
         let probe_address = TargetAddress {
             hostname: "500.132.245.251".to_string(),
             port: 25566,

@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.timeout_fallback,
         args.timeout_offset,
         args.protocol_version,
-        Resolver::builder_tokio()?.build(),
+        Resolver::builder_tokio()?.build()?,
     ));
 
     // run mcexport blocking
