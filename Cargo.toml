@@ -13,7 +13,7 @@ homepage = "https://github.com/scrayosnet/mcexport"
 keywords = ["minecraft", "prometheus", "monitoring", "exporter", "ping"]
 categories = ["development-tools", "command-line-utilities"]
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.88.0"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
@@ -21,7 +21,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-hickory-resolver = "0.25"
+hickory-resolver = "0.26.1"
 thiserror = "2"
 prometheus-client = "0.24"
 tracing-subscriber = "0.3"
