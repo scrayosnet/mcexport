@@ -35,9 +35,7 @@ use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, body::Body, routing::get};
 use prometheus_client::registry::Registry;
-use prometheus_client::{encoding::text::encode, metrics::family::Family, metrics::gauge::Gauge};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use prometheus_client::{encoding::text::encode, metrics::gauge::Gauge};
 use std::sync::{Arc, atomic::AtomicU32, atomic::AtomicU64};
 use tokio::{net::TcpListener, time::timeout};
 use tower_http::trace::TraceLayer;
@@ -50,10 +48,10 @@ use tracing::{info, instrument, warn};
 /// wrapped into a parent type so that they can be more easily traced.
 #[derive(thiserror::Error, Debug)]
 enum Error {
-    /// An error occurred while reading or writing to the underlying byte stream.
+    /// An error occurred while resolving the target address.
     #[error("failed to resolve the intended target address: {0}")]
     ProbeFail(#[source] probe::Error, ProbingInfo),
-    /// An error occurred while reading or writing to the underlying byte stream.
+    /// An error occurred while pinging the target server.
     #[error("failed to communicate with the target server: {0}")]
     PingFail(#[source] ping::Error, ProbingInfo),
     /// An error occurred while trying to read and parse the supplied timeout.
@@ -90,106 +88,91 @@ impl IntoResponse for ProbeStatus {
         // return the generated metrics
         generate_metrics_response(1, |registry| {
             // ping duration (gauge)
-            let ping_duration = Family::<Vec<(String, String)>, Gauge<f64, AtomicU64>>::default();
+            let ping_duration = Gauge::<f64, AtomicU64>::default();
             registry.register(
                 "ping_duration_seconds",
                 "The duration that's elapsed since the probe request",
                 ping_duration.clone(),
             );
-            ping_duration
-                .get_or_create(&vec![])
-                .set(self.ping.as_secs_f64());
+            ping_duration.set(self.ping.as_secs_f64());
 
             // srv record (Gauge)
-            let address_srv = Family::<Vec<(String, String)>, Gauge>::default();
+            let address_srv: Gauge = Gauge::default();
             registry.register(
                 "address_srv_info",
                 "Whether there was an SRV record for the hostname",
                 address_srv.clone(),
             );
-            address_srv.get_or_create(&vec![]).set(i64::from(self.srv));
+            address_srv.set(i64::from(self.srv));
 
-            // srv record (Gauge)
-            let address_srv = Family::<Vec<(String, String)>, Gauge>::default();
+            // ping valid (Gauge)
+            let address_ping_valid: Gauge = Gauge::default();
             registry.register(
                 "address_ping_valid_info",
                 "Whether the ping response contained the correct payload",
-                address_srv.clone(),
+                address_ping_valid.clone(),
             );
-            address_srv
-                .get_or_create(&vec![])
-                .set(i64::from(self.valid));
+            address_ping_valid.set(i64::from(self.valid));
 
             // online players (gauge)
-            let players_online = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
+            let players_online = Gauge::<u32, AtomicU32>::default();
             registry.register(
                 "players_online_total",
                 "The number of players that are currently online",
                 players_online.clone(),
             );
-            players_online
-                .get_or_create(&vec![])
-                .set(self.status.players.online);
+            players_online.set(self.status.players.online);
 
             // max players (gauge)
-            let players_max = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
+            let players_max = Gauge::<u32, AtomicU32>::default();
             registry.register(
                 "players_max_total",
                 "The number of players that can join at maximum",
                 players_max.clone(),
             );
-            players_max
-                .get_or_create(&vec![])
-                .set(self.status.players.max);
+            players_max.set(self.status.players.max);
 
             // sample players (gauge)
-            let players_samples_count =
-                Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
+            let players_samples_count = Gauge::<u32, AtomicU32>::default();
             registry.register(
                 "players_samples_total",
                 "The number of sample entries that have been sent",
                 players_samples_count.clone(),
             );
-            players_samples_count.get_or_create(&vec![]).set(
+            let sample_count =
                 self.status
                     .players
                     .sample
-                    .map_or_else(|| 0_usize, |samples| samples.len()) as u32,
-            );
+                    .map_or_else(|| 0_usize, |samples| samples.len()) as u32;
+            players_samples_count.set(sample_count);
 
             // protocol version (gauge)
-            let protocol_version = Family::<Vec<(String, String)>, Gauge>::default();
+            let protocol_version: Gauge = Gauge::default();
             registry.register(
                 "protocol_version_info",
                 "The numeric network protocol version",
                 protocol_version.clone(),
             );
-            protocol_version
-                .get_or_create(&vec![])
-                .set(self.status.version.protocol);
+            protocol_version.set(self.status.version.protocol);
 
-            // protocol version (gauge)
-            let mut hasher = DefaultHasher::new();
-            self.status.version.name.hash(&mut hasher);
-            let protocol_hash = Family::<Vec<(String, String)>, Gauge>::default();
+            // protocol version hash (gauge) — FNV-1a for stable output across Rust versions
+            let protocol_hash: Gauge = Gauge::default();
             registry.register(
                 "protocol_version_hash",
                 "The numeric hash of the visual network protocol",
                 protocol_hash.clone(),
             );
-            protocol_hash
-                .get_or_create(&vec![])
-                .set(hasher.finish() as i64);
+            protocol_hash.set(fnv1a_hash(&self.status.version.name));
 
             // favicon bytes (gauge)
-            let favicon_bytes = Family::<Vec<(String, String)>, Gauge<u32, AtomicU32>>::default();
+            let favicon_bytes = Gauge::<u32, AtomicU32>::default();
             registry.register(
                 "favicon_bytes",
                 "The size of the favicon in bytes",
                 favicon_bytes.clone(),
             );
             let size: usize = self.status.favicon.map_or(0, |icon| icon.len());
-            favicon_bytes.get_or_create(&vec![]).set(size as u32);
+            favicon_bytes.set(size as u32);
         })
     }
 }
@@ -284,6 +267,20 @@ async fn handle_probe(
     }
 }
 
+/// Computes a FNV-1a hash of the given string as a stable i64.
+///
+/// Unlike [`std::collections::hash_map::DefaultHasher`], FNV-1a produces identical output across
+/// all Rust versions and compiler settings, making it safe for use in Prometheus gauges where a
+/// changing hash value would trigger false alerts.
+fn fnv1a_hash(s: &str) -> i64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in s.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as i64
+}
+
 /// Generates a response for the supplied success state and optionally allows adding more metrics.
 ///
 /// This initializes the [registry][Registry] for this request and registers the success metric with the supplied state
@@ -297,7 +294,7 @@ where
     let mut registry = Registry::with_prefix("mcexport");
 
     // create and register the success metric
-    let success = Family::<Vec<(String, String)>, Gauge>::default();
+    let success: Gauge = Gauge::default();
     registry.register(
         "success",
         "Whether the probe operation was successful",
@@ -305,13 +302,13 @@ where
     );
 
     // set the success status of this metric
-    success.get_or_create(&vec![]).set(success_state);
+    success.set(success_state);
 
     // add dynamic, desired metrics
     add_metrics(&mut registry);
 
-    // create a new buffer to store the metrics in
-    let mut buffer = String::new();
+    // create a new buffer to store the metrics in (pre-allocated to avoid reallocations)
+    let mut buffer = String::with_capacity(1024);
 
     // encode the metrics content into the buffer
     encode(&mut buffer, &registry).expect("failed to encode metrics into the buffer");

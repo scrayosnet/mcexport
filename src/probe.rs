@@ -78,7 +78,7 @@ impl Display for ProbingInfo {
 pub struct TargetAddress {
     /// The hostname that should be resolved to the IP address (optionally considering SRV records).
     pub hostname: String,
-    /// The post that should be used to ping the Minecraft server (ignored if SRV exists).
+    /// The port that should be used to ping the Minecraft server (ignored if SRV exists).
     pub port: u16,
 }
 
@@ -95,51 +95,66 @@ impl TargetAddress {
         // assemble the SRV record name
         let srv_name = format!("_minecraft._tcp.{}", self.hostname);
         debug!("trying to resolve SRV record: '{srv_name}'");
-        let srv_response = resolver.srv_lookup(&srv_name).await;
 
-        // check if any SRV record was present (use this data then)
-        let (hostname, port, srv_used) = srv_response.map_or_else(
-            |_| {
-                debug!("found no SRV record for '{srv_name}'");
-                (self.hostname.clone(), self.port, false)
-            },
-            |response| {
-                response.answers().iter().find_map(|rec| match &rec.data {
-                        RData::SRV(srv) => Some(srv),
-                        _ => None,
-                    })
-                    .map_or_else(
-                        || {
-                            debug!(
-                                "found an SRV record for '{srv_name}', but it was of an invalid type"
-                            );
-                            (self.hostname.clone(), self.port, false)
-                        },
-                        |record| {
-                            let target = record.target.to_utf8();
-                            let target_port = record.port;
-                            debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
-                            (target, target_port, true)
-                        },
-                    )
-            },
+        // Phase A: fire both SRV lookup and fallback IP lookup concurrently so that
+        // the common case (no SRV record) only pays one DNS round trip instead of two.
+        let (srv_result, fallback_ip_result) = tokio::join!(
+            resolver.srv_lookup(&srv_name),
+            resolver.lookup_ip(self.hostname.as_str())
         );
 
-        // resolve the underlying ips for the hostname
-        let ip_response = resolver.lookup_ip(&hostname).await?;
-        for ip in ip_response.iter() {
-            debug!("resolved ip address {} for hostname {}", ip, &hostname);
-            if ip.is_ipv4() {
-                return if srv_used {
-                    Ok(ResolutionResult::Srv(SocketAddr::new(ip, port)))
+        // Extract a valid SRV target from the response, if any
+        let srv_target: Option<(String, u16)> = match srv_result {
+            Err(_) => {
+                debug!("found no SRV record for '{srv_name}'");
+                None
+            }
+            Ok(response) => {
+                match response.answers().iter().find_map(|rec| match &rec.data {
+                    RData::SRV(srv) => Some((srv.target.to_utf8(), srv.port)),
+                    _ => None,
+                }) {
+                    None => {
+                        debug!(
+                            "found an SRV record for '{srv_name}', but it was of an invalid type"
+                        );
+                        None
+                    }
+                    Some(target) => Some(target),
+                }
+            }
+        };
+
+        match srv_target {
+            None => {
+                // No SRV: consume the fallback IP result already resolved in Phase A
+                let ip_response = fallback_ip_result?;
+                for ip in ip_response.iter() {
+                    debug!("resolved ip address {} for hostname {}", ip, &self.hostname);
+                    if ip.is_ipv4() {
+                        return Ok(ResolutionResult::Plain(SocketAddr::new(ip, self.port)));
+                    }
+                }
+                Err(Error::CouldNotResolveIp(self.hostname.clone()))
+            }
+            Some((target, target_port)) => {
+                debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
+                // Phase B: resolve the IP for the SRV target.
+                // If the SRV target happens to equal self.hostname, reuse the Phase A result.
+                let ip_response = if target == self.hostname {
+                    fallback_ip_result?
                 } else {
-                    Ok(ResolutionResult::Plain(SocketAddr::new(ip, port)))
+                    resolver.lookup_ip(&target).await?
                 };
+                for ip in ip_response.iter() {
+                    debug!("resolved ip address {} for hostname {}", ip, &target);
+                    if ip.is_ipv4() {
+                        return Ok(ResolutionResult::Srv(SocketAddr::new(ip, target_port)));
+                    }
+                }
+                Err(Error::CouldNotResolveIp(target))
             }
         }
-
-        // no IPv4 could be found, return an error
-        Err(Error::CouldNotResolveIp(hostname))
     }
 }
 

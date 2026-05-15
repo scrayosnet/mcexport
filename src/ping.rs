@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::from_str;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::io::BufStream;
 use tokio::net::TcpStream;
 use tracing::{debug, instrument};
 
@@ -105,11 +106,13 @@ pub async fn get_server_status(
     srv: bool,
     fallback_protocol_version: isize,
 ) -> Result<ProbeStatus, Error> {
-    // create a new tcp stream to the target
+    // create a new tcp stream to the target, wrapped in BufStream to batch I/O
     debug!("establishing connection to target server");
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .map_err(|_| Error::CannotReach)?;
+    let mut stream = BufStream::new(
+        TcpStream::connect(addr)
+            .await
+            .map_err(|_| Error::CannotReach)?,
+    );
 
     // try to use specific, requested version and fall back to "recent"
     let protocol_version = match &info.module {
@@ -167,7 +170,6 @@ mod tests {
         assert_eq!(4, status.players.online);
         assert_eq!(6, status.players.max);
         assert_eq!(sample, status.players.sample);
-        assert_eq!(favicon, status.favicon);
         assert_eq!(favicon, status.favicon);
     }
 
@@ -299,165 +301,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_server_status_with_mock_connection() {
-        use crate::protocol::HandshakeInfo;
-        use tokio::io::{AsyncWriteExt, duplex};
+        use crate::protocol::{HandshakeInfo, test_server};
+        use tokio::io::duplex;
 
         let (mut client, mut server) = duplex(4096);
 
-        // Spawn a task to simulate server responses
+        let response_json = r#"{"version":{"protocol":764,"name":"1.20.1"},"players":{"online":5,"max":20},"description":"Test Server"}"#;
+
         let server_task = tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-
-            // Read handshake packet
-            let mut len_buf = [0u8; 10];
-            let mut len = 0usize;
-            let mut bytes_read = 0;
-            loop {
-                server
-                    .read_exact(&mut len_buf[bytes_read..bytes_read + 1])
-                    .await
-                    .unwrap();
-                let byte = len_buf[bytes_read];
-                len |= ((byte & 0x7F) as usize) << (7 * bytes_read);
-                bytes_read += 1;
-                if (byte & 0x80) == 0 {
-                    break;
-                }
-            }
-
-            let mut packet_buf = vec![0u8; len];
-            server.read_exact(&mut packet_buf).await.unwrap();
-
-            // Read status request packet
-            let mut len2 = 0usize;
-            let mut bytes_read2 = 0;
-            loop {
-                let mut byte_buf = [0u8; 1];
-                server.read_exact(&mut byte_buf).await.unwrap();
-                let byte = byte_buf[0];
-                len2 |= ((byte & 0x7F) as usize) << (7 * bytes_read2);
-                bytes_read2 += 1;
-                if (byte & 0x80) == 0 {
-                    break;
-                }
-            }
-
-            let mut packet_buf2 = vec![0u8; len2];
-            server.read_exact(&mut packet_buf2).await.unwrap();
-
-            // Send status response
-            let response_json = "{\"version\":{\"protocol\":764,\"name\":\"1.20.1\"},\"players\":{\"online\":5,\"max\":20},\"description\":\"Test Server\"}";
-            let mut response_payload = Vec::new();
-
-            // Write packet ID (0x00)
-            response_payload.push(0x00);
-
-            // Write string length as VarInt
-            let mut len = response_json.len();
-            loop {
-                let mut temp = (len & 0x7F) as u8;
-                len >>= 7;
-                if len != 0 {
-                    temp |= 0x80;
-                }
-                response_payload.push(temp);
-                if len == 0 {
-                    break;
-                }
-            }
-
-            // Write string bytes
-            response_payload.extend_from_slice(response_json.as_bytes());
-
-            // Write packet length as VarInt
-            let mut packet_len = response_payload.len();
-            let mut length_bytes = Vec::new();
-            loop {
-                let mut temp = (packet_len & 0x7F) as u8;
-                packet_len >>= 7;
-                if packet_len != 0 {
-                    temp |= 0x80;
-                }
-                length_bytes.push(temp);
-                if packet_len == 0 {
-                    break;
-                }
-            }
-
-            server.write_all(&length_bytes).await.unwrap();
-            server.write_all(&response_payload).await.unwrap();
-            server.flush().await.unwrap();
-
-            // Read ping packet
-            let mut ping_len = 0usize;
-            let mut ping_bytes_read = 0;
-            loop {
-                let mut byte_buf = [0u8; 1];
-                server.read_exact(&mut byte_buf).await.unwrap();
-                let byte = byte_buf[0];
-                ping_len |= ((byte & 0x7F) as usize) << (7 * ping_bytes_read);
-                ping_bytes_read += 1;
-                if (byte & 0x80) == 0 {
-                    break;
-                }
-            }
-
-            let mut ping_packet = vec![0u8; ping_len];
-            server.read_exact(&mut ping_packet).await.unwrap();
-
-            // Extract payload (skip packet ID byte, read u64)
-            let payload = u64::from_be_bytes([
-                ping_packet[1],
-                ping_packet[2],
-                ping_packet[3],
-                ping_packet[4],
-                ping_packet[5],
-                ping_packet[6],
-                ping_packet[7],
-                ping_packet[8],
-            ]);
-
-            // Send pong response
-            let mut pong_payload = Vec::new();
-            pong_payload.push(0x01); // Pong packet ID
-            pong_payload.extend_from_slice(&payload.to_be_bytes());
-
-            // Write pong packet length
-            let mut pong_len = pong_payload.len();
-            let mut pong_length_bytes = Vec::new();
-            loop {
-                let mut temp = (pong_len & 0x7F) as u8;
-                pong_len >>= 7;
-                if pong_len != 0 {
-                    temp |= 0x80;
-                }
-                pong_length_bytes.push(temp);
-                if pong_len == 0 {
-                    break;
-                }
-            }
-
-            server.write_all(&pong_length_bytes).await.unwrap();
-            server.write_all(&pong_payload).await.unwrap();
-            server.flush().await.unwrap();
+            test_server::serve_status_exchange(&mut server, response_json)
+                .await
+                .expect("mock status exchange should succeed");
+            test_server::serve_ping_exchange(&mut server)
+                .await
+                .expect("mock ping exchange should succeed");
         });
 
-        // Execute the ping protocol
         let handshake_info = HandshakeInfo::new(764, "test.server".to_string(), 25565);
-        let status_result = protocol::retrieve_status(&mut client, &handshake_info).await;
-        assert!(status_result.is_ok());
+        let status_json = protocol::retrieve_status(&mut client, &handshake_info)
+            .await
+            .expect("status retrieval should succeed");
 
-        let status_json = status_result.unwrap();
         let status: ServerStatus = from_str(&status_json).expect("could not deserialize");
-
         assert_eq!("1.20.1", status.version.name);
         assert_eq!(764, status.version.protocol);
         assert_eq!(5, status.players.online);
         assert_eq!(20, status.players.max);
 
-        let (ping, valid) = protocol::execute_ping(&mut client).await.unwrap();
+        let (ping, valid) = protocol::execute_ping(&mut client)
+            .await
+            .expect("ping should succeed");
         assert!(valid);
-        assert!(ping.as_millis() < 1000); // Should be very fast for in-memory connection
+        assert!(ping.as_millis() < 1000);
 
         server_task.await.unwrap();
     }
