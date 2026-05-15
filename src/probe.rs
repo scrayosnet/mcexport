@@ -5,8 +5,8 @@
 //! default values and SRV records are considered while resolving the dynamic target address. It is the responsibility
 //! of this module to standardize the desired probing that should be performed for a request.
 
-use hickory_resolver::net::NetError;
 use hickory_resolver::TokioResolver;
+use hickory_resolver::net::NetError;
 use hickory_resolver::proto::rr::RData;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, de};
