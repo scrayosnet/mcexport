@@ -16,7 +16,7 @@ edition = "2024"
 rust-version = "1.88.0"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "tower-log", "tracing", "query"] }
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }

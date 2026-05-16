@@ -12,7 +12,7 @@ use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, de};
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use tracing::debug;
 
 /// The internal error type for all [`ProbingInfo`] related errors.
@@ -78,7 +78,7 @@ impl Display for ProbingInfo {
 pub struct TargetAddress {
     /// The hostname that should be resolved to the IP address (optionally considering SRV records).
     pub hostname: String,
-    /// The post that should be used to ping the Minecraft server (ignored if SRV exists).
+    /// The port that should be used to ping the Minecraft server (ignored if SRV exists).
     pub port: u16,
 }
 
@@ -88,6 +88,8 @@ impl TargetAddress {
     /// The hostname of this address is resolved through DNS and is used as the IP address of the resulting socket
     /// address. To do this, we also check the SRV record for minecraft (`_minecraft._tcp`) and prefer to use this
     /// information. If any SRV record was found, the second return of this function will be true.
+    ///
+    /// IPv4 addresses are preferred over IPv6. If no IPv4 address is available, the first IPv6 address is used.
     pub async fn to_socket_addrs(
         &self,
         resolver: &TokioResolver,
@@ -95,52 +97,79 @@ impl TargetAddress {
         // assemble the SRV record name
         let srv_name = format!("_minecraft._tcp.{}", self.hostname);
         debug!("trying to resolve SRV record: '{srv_name}'");
-        let srv_response = resolver.srv_lookup(&srv_name).await;
 
-        // check if any SRV record was present (use this data then)
-        let (hostname, port, srv_used) = srv_response.map_or_else(
-            |_| {
-                debug!("found no SRV record for '{srv_name}'");
-                (self.hostname.clone(), self.port, false)
-            },
-            |response| {
-                response.answers().iter().find_map(|rec| match &rec.data {
-                        RData::SRV(srv) => Some(srv),
-                        _ => None,
-                    })
-                    .map_or_else(
-                        || {
-                            debug!(
-                                "found an SRV record for '{srv_name}', but it was of an invalid type"
-                            );
-                            (self.hostname.clone(), self.port, false)
-                        },
-                        |record| {
-                            let target = record.target.to_utf8();
-                            let target_port = record.port;
-                            debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
-                            (target, target_port, true)
-                        },
-                    )
-            },
+        // Phase A: fire both SRV lookup and fallback IP lookup concurrently so that
+        // the common case (no SRV record) only pays one DNS round trip instead of two.
+        let (srv_result, fallback_ip_result) = tokio::join!(
+            resolver.srv_lookup(&srv_name),
+            resolver.lookup_ip(self.hostname.as_str())
         );
 
-        // resolve the underlying ips for the hostname
-        let ip_response = resolver.lookup_ip(&hostname).await?;
-        for ip in ip_response.iter() {
-            debug!("resolved ip address {} for hostname {}", ip, &hostname);
-            if ip.is_ipv4() {
-                return if srv_used {
-                    Ok(ResolutionResult::Srv(SocketAddr::new(ip, port)))
+        // Extract a valid SRV target from the response, if any
+        let srv_target: Option<(String, u16)> = match srv_result {
+            Err(_) => {
+                debug!("found no SRV record for '{srv_name}'");
+                None
+            }
+            Ok(response) => {
+                match response.answers().iter().find_map(|rec| match &rec.data {
+                    RData::SRV(srv) => Some((srv.target.to_utf8(), srv.port)),
+                    _ => None,
+                }) {
+                    None => {
+                        debug!(
+                            "found an SRV record for '{srv_name}', but it was of an invalid type"
+                        );
+                        None
+                    }
+                    Some(target) => Some(target),
+                }
+            }
+        };
+
+        match srv_target {
+            None => {
+                // No SRV: consume the fallback IP result already resolved in Phase A
+                let ip_response = fallback_ip_result?;
+                prefer_ipv4(ip_response.iter())
+                    .map(|ip| {
+                        debug!("resolved ip address {} for hostname {}", ip, &self.hostname);
+                        ResolutionResult::Plain(SocketAddr::new(ip, self.port))
+                    })
+                    .ok_or_else(|| Error::CouldNotResolveIp(self.hostname.clone()))
+            }
+            Some((target, target_port)) => {
+                debug!("found an SRV record for '{srv_name}': {target}:{target_port}");
+                // Phase B: resolve the IP for the SRV target.
+                // If the SRV target happens to equal self.hostname, reuse the Phase A result.
+                let ip_response = if target == self.hostname {
+                    fallback_ip_result?
                 } else {
-                    Ok(ResolutionResult::Plain(SocketAddr::new(ip, port)))
+                    resolver.lookup_ip(&target).await?
                 };
+                prefer_ipv4(ip_response.iter())
+                    .map(|ip| {
+                        debug!("resolved ip address {} for hostname {}", ip, &target);
+                        ResolutionResult::Srv(SocketAddr::new(ip, target_port))
+                    })
+                    .ok_or(Error::CouldNotResolveIp(target))
             }
         }
-
-        // no IPv4 could be found, return an error
-        Err(Error::CouldNotResolveIp(hostname))
     }
+}
+
+/// Returns the first IPv4 address from the iterator, or the first IPv6 address if no IPv4 is present.
+fn prefer_ipv4(ips: impl Iterator<Item = IpAddr>) -> Option<IpAddr> {
+    let mut ipv6_fallback = None;
+    for ip in ips {
+        if ip.is_ipv4() {
+            return Some(ip);
+        }
+        if ipv6_fallback.is_none() {
+            ipv6_fallback = Some(ip);
+        }
+    }
+    ipv6_fallback
 }
 
 impl Display for TargetAddress {
@@ -219,6 +248,7 @@ mod tests {
     use super::*;
     use hickory_resolver::Resolver;
     use serde_test::{Token, assert_de_tokens, assert_de_tokens_error};
+    use std::net::Ipv6Addr;
 
     #[test]
     fn deserialize_without_port() {
@@ -375,5 +405,30 @@ mod tests {
             port: 25566,
         };
         probe_address.to_socket_addrs(&resolver).await.unwrap();
+    }
+
+    #[test]
+    fn prefer_ipv4_returns_ipv4_when_available() {
+        let ipv4 = IpAddr::from([127, 0, 0, 1]);
+        let ipv6 = IpAddr::from(Ipv6Addr::LOCALHOST);
+        assert_eq!(prefer_ipv4([ipv6, ipv4].into_iter()), Some(ipv4));
+    }
+
+    #[test]
+    fn prefer_ipv4_falls_back_to_ipv6_when_no_ipv4() {
+        let ipv6 = IpAddr::from(Ipv6Addr::LOCALHOST);
+        assert_eq!(prefer_ipv4([ipv6].into_iter()), Some(ipv6));
+    }
+
+    #[test]
+    fn prefer_ipv4_returns_first_ipv6_when_multiple() {
+        let first = IpAddr::from(Ipv6Addr::LOCALHOST);
+        let second = IpAddr::from(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        assert_eq!(prefer_ipv4([first, second].into_iter()), Some(first));
+    }
+
+    #[test]
+    fn prefer_ipv4_returns_none_for_empty_input() {
+        assert_eq!(prefer_ipv4(std::iter::empty()), None);
     }
 }

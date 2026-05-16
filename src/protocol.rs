@@ -441,15 +441,14 @@ where
     debug!(packet = debug(&request), "sending status request packet");
     stream.write_packet(request).await?;
 
+    // flush write buffer before reading so the server receives all packets
+    stream.flush().await?;
+
     // await the response for the status request and read it
     debug!("awaiting and reading status response packet");
     let response: StatusResponsePacket = stream.read_packet().await?;
     debug!(packet = debug(&response), "received status response packet");
 
-    debug!(
-        packet = debug(&response),
-        "received a status response packet"
-    );
     Ok(response.body)
 }
 
@@ -481,6 +480,9 @@ where
     debug!(packet = debug(&ping_request), "sending ping packet");
     stream.write_packet(ping_request).await?;
 
+    // flush write buffer before reading so the server receives the ping packet
+    stream.flush().await?;
+
     // await the retrieval of the corresponding pong packet
     debug!("awaiting and reading pong packet");
     let ping_response: PongPacket = stream.read_packet().await?;
@@ -498,10 +500,110 @@ where
     Ok((duration, true))
 }
 
+/// Test helpers that simulate the server side of the Minecraft Server List Ping protocol.
+///
+/// These allow tests to replace the ~150-line hand-rolled VarInt mock with clean calls that use
+/// the same `read_packet` / `write_packet` infrastructure as production code.
+#[cfg(test)]
+pub(crate) mod test_server {
+    use super::*;
+
+    /// Reads a handshake + status request from the client, then writes a status response.
+    pub(crate) async fn serve_status_exchange<S>(
+        stream: &mut S,
+        status_json: &str,
+    ) -> Result<(), Error>
+    where
+        S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
+    {
+        let _: HandshakePacket = stream.read_packet().await?;
+        let _: StatusRequestPacket = stream.read_packet().await?;
+        stream
+            .write_packet(StatusResponsePacket {
+                body: status_json.to_string(),
+            })
+            .await?;
+        stream.flush().await?;
+        Ok(())
+    }
+
+    /// Reads a ping packet from the client and echoes the payload back as a pong.
+    pub(crate) async fn serve_ping_exchange<S>(stream: &mut S) -> Result<(), Error>
+    where
+        S: AsyncWrite + AsyncRead + Unpin + Send + Sync,
+    {
+        let ping: PingPacket = stream.read_packet().await?;
+        stream
+            .write_packet(PongPacket {
+                payload: ping.payload,
+            })
+            .await?;
+        stream.flush().await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    impl InboundPacket for HandshakePacket {
+        async fn new_from_buffer<S>(buffer: &mut S) -> Result<Self, Error>
+        where
+            S: AsyncRead + Unpin + Send + Sync,
+        {
+            #[allow(clippy::cast_possible_wrap)]
+            let protocol_version = buffer.read_varint().await? as isize;
+            let server_address = buffer.read_string().await?;
+            let server_port = buffer.read_u16().await?;
+            let _next_state = buffer.read_varint().await?;
+            Ok(Self {
+                protocol_version,
+                server_address,
+                server_port,
+            })
+        }
+    }
+
+    impl InboundPacket for StatusRequestPacket {
+        async fn new_from_buffer<S>(_buffer: &mut S) -> Result<Self, Error>
+        where
+            S: AsyncRead + Unpin + Send + Sync,
+        {
+            Ok(Self)
+        }
+    }
+
+    impl InboundPacket for PingPacket {
+        async fn new_from_buffer<S>(buffer: &mut S) -> Result<Self, Error>
+        where
+            S: AsyncRead + Unpin + Send + Sync,
+        {
+            let payload = buffer.read_u64().await?;
+            Ok(Self { payload })
+        }
+    }
+
+    impl OutboundPacket for StatusResponsePacket {
+        async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
+        where
+            S: AsyncWrite + Unpin + Send + Sync,
+        {
+            buffer.write_string(&self.body).await?;
+            Ok(())
+        }
+    }
+
+    impl OutboundPacket for PongPacket {
+        async fn write_to_buffer<S>(&self, buffer: &mut S) -> Result<(), Error>
+        where
+            S: AsyncWrite + Unpin + Send + Sync,
+        {
+            buffer.write_u64(self.payload).await?;
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn packet_ids_valid() {
